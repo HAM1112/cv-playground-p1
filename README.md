@@ -1,103 +1,117 @@
 # cv-playground-p1 — gridcheck
 
-Version 1 of a small computer-vision project: point a camera at a white sheet with a
-bordered grid of boxes and get one of three answers.
+Point a camera at a white sheet with a bordered grid of boxes. The program prints one answer:
 
-> New here? Read **[GUIDE.md](GUIDE.md)** — a top-to-bottom walkthrough for beginners: every
-> command, how to set up and run training, the libraries used, where data is stored and how
-> each module works.
-
-| Output               | Meaning                                              |
-|----------------------|------------------------------------------------------|
-| `Full`               | every box contains a black circle                    |
-| `Available`          | at least one box is empty                            |
-| `invalid field view` | no usable bordered grid is visible in the frame      |
+| Output               | Meaning                                         |
+|----------------------|-------------------------------------------------|
+| `Full`               | every box contains a black circle               |
+| `Available`          | at least one box is empty                       |
+| `invalid field view` | no complete, usable bordered grid is in view    |
 
 The number of boxes (rows × columns) is not fixed; it is read from the image.
 
-## How it works
+> Want the long version? **[GUIDE.md](GUIDE.md)** explains everything in depth for beginners.
 
-1. **Board detection (OpenCV, `src/gridcheck/board.py`)** – adaptive threshold, contour
-   search for the rectangular border, perspective warp to a top-down canvas, grid lines from
-   row/column ink profiles, one crop per cell. Frames without a clean border + grid (or with
-   the border cut off by the frame edge) return `None` → `invalid field view`.
-2. **Cell classifier (PyTorch, `src/gridcheck/model.py`)** – `CellNet`, a ~25k-parameter CNN
-   that labels each 64×64 grayscale cell crop as `empty` or `circle`.
-3. **Decision (`src/gridcheck/infer.py`)** – all cells `circle` → `Full`, else `Available`.
-
-Training data is synthetic (`src/gridcheck/synth.py`): random grids with random circles,
-perspective, lighting, blur, noise and JPEG artefacts, pushed through the same detection
-pipeline so training crops match inference crops. Hand-labelled real crops can be added under
-`data/real/circle/` and `data/real/empty/` and are picked up automatically by `train`.
-
-## Setup
-
-Requires [uv](https://docs.astral.sh/uv/). Python 3.12 and all dependencies are installed by:
+## How the system works
 
 ```
-uv sync --extra dev
+picture ──► 1. OpenCV finds the border, flattens it, finds the grid lines,
+                cuts one 64×64 crop per box            (no grid found → invalid field view)
+        ──► 2. CellNet (a tiny PyTorch neural network) labels each crop: circle / empty
+        ──► 3. all circle → Full, otherwise → Available
 ```
 
-CPU wheels of PyTorch are the default; see the commented block in `pyproject.toml` for CUDA.
+The neural network is trained on thousands of computer-drawn boards (synthetic data) plus
+crops cut from your own photos.
 
-## Usage
+## Run the project
 
-```
-uv run gridcheck image tests/fixtures/partial_grid.png          # prints: Available
-uv run gridcheck image path/to/photo.jpg --debug --save out.png # overlay + per-cell probabilities
-uv run gridcheck cam --debug                                    # live webcam, q to quit
-```
-
-`image` pads the picture with a white margin so tightly cropped scans work; `cam` does not,
-so a border touching the edge of the camera view is reported as invalid.
-
-## Training (already done; weights in `models/cellnet.pt`)
+Install [uv](https://docs.astral.sh/uv/) once, then:
 
 ```
-uv run gridcheck synth --n 20000            # -> data/synth_cells.npz
-uv run gridcheck train --epochs 10          # -> models/cellnet.pt
-uv run pytest                               # detection + end-to-end tests
+uv sync --extra dev                                   # installs Python 3.12 + all libraries
+uv run gridcheck image tests/fixtures/partial_grid.png  # prints: Available
+uv run gridcheck cam --debug                            # live webcam: q quits, s saves a frame
 ```
 
-`gridcheck synth --samples some/dir --n 0` writes a few full synthetic frames for inspection.
+Camera tip: keep the whole border inside the view with some white paper around it. A border
+touching the edge of the frame is reported as `invalid field view`, and `--debug` tells you why.
 
-## Training on your own photos
+## Commands
 
-Drop photos of the sheet into these two folders (git-ignored), sorted by what the answer
-should be:
+| Command | Purpose |
+|---|---|
+| `uv run gridcheck image <file> [--debug] [--save out.png]` | classify one picture; `--debug` shows the overlay and per-box probabilities |
+| `uv run gridcheck cam [--device 0] [--debug]` | live webcam; prints the status when it changes |
+| `uv run gridcheck train [--epochs 10]` | harvest your photos, build synthetic data if missing, train, save the model |
+| `uv run gridcheck synth [--n 20000] [--samples DIR]` | (re)generate the synthetic dataset; optionally save example frames |
+| `uv run gridcheck harvest <folder> [--sheets DIR]` | cut and auto-label box crops from unsorted photos, with review sheets |
+| `uv run gridcheck reset [--dry-run] [--photos]` | delete the trained model and generated data; photos kept unless `--photos` |
+| `uv run pytest` | run the tests |
+
+Add `--help` to any command for all options.
+
+## Set up and run training
+
+1. Photograph the sheet (webcam `s` key or a phone).
+2. Sort the photos into two folders:
+
+   ```
+   data/photos/full/         every box has a circle
+   data/photos/available/    at least one box is empty
+   ```
+
+3. Run:
+
+   ```
+   uv run gridcheck train
+   ```
+
+That one command cuts one crop per box from every photo (`full/` → all circle; `available/` →
+each box judged by the ink in it), builds the synthetic dataset the first time (~5 min), mixes
+real and synthetic crops, trains for 10 epochs (~3 min on CPU) and writes `models/cellnet.pt`.
+Watch the printed `val acc`; it should end near 100%. Re-running is safe. To start from
+scratch, run `uv run gridcheck reset` first.
+
+## Tools and libraries
+
+| Tool | Purpose |
+|---|---|
+| **uv** | installs Python and the libraries, runs the `gridcheck` command |
+| **Python 3.12** | the language |
+| **OpenCV** (`cv2`) | reads images and the camera; finds the border, lines and boxes; draws the overlay |
+| **PyTorch** (`torch`) | defines, trains and runs the CellNet neural network |
+| **torchvision** | PyTorch's image helpers (installed with torch) |
+| **NumPy** | the array type every image and profile is stored in |
+| **pytest** | runs the tests |
+
+## Where data is saved
+
+There is no database; everything is a plain file.
+
+| Data | Location | Tracked by git? |
+|---|---|---|
+| Trained model (the learned weights) | `models/cellnet.pt` | yes |
+| Your photos | `data/photos/full/`, `data/photos/available/` | no |
+| Crops cut from your photos | `data/real/circle/`, `data/real/empty/` | no |
+| Synthetic training crops | `data/synth_cells.npz` | no |
+| Frames saved from the camera | `captures/` | no |
+| Predictions | printed to the terminal only | — |
+
+Everything except the model and your photos is regenerated by `gridcheck train`.
+
+## Project files
 
 ```
-data/photos/full/         every box has a circle
-data/photos/available/    at least one box is empty
+src/gridcheck/
+  cli.py       the gridcheck command
+  board.py     find border, grid lines, boxes (OpenCV)
+  model.py     CellNet neural network
+  infer.py     verdict + debug overlay
+  synth.py     synthetic board renderer
+  dataset.py   build training data
+  train.py     training loop
+  harvest.py   crops from your photos
+  reset.py     fresh-project cleanup
+tests/         pytest tests and the two reference sketches
 ```
-
-Then run one command:
-
-```
-uv run gridcheck train
-```
-
-It cuts one crop per box out of every photo (`full/` crops are all labelled circle; in
-`available/` each box is labelled by the ink in its centre), mixes them with the synthetic data
-at ~15% weight, trains for 10 epochs and writes `models/cellnet.pt`. Re-running is safe: crops
-are regenerated with fixed names. Options: `--epochs N`, `--photos DIR`, `--no-photos`.
-
-Photos whose border runs off the frame still contribute: every clean box in them is used.
-The command warns about `available/` photos in which every box looks filled.
-
-## Starting over
-
-```
-uv run gridcheck reset            # shows what will go, asks y/N
-uv run gridcheck reset --dry-run  # only list
-uv run gridcheck reset --photos   # also delete your photos in data/photos
-```
-
-Removes the trained model, the synthetic dataset, harvested crops and camera snapshots.
-Your photos are kept unless `--photos` is given. `gridcheck train` rebuilds everything.
-
-Unsorted photos can be cut into crops for manual sorting with
-`uv run gridcheck harvest some/folder --sheets review/`, which also writes contact sheets.
-
-Framing tips for the camera: keep the whole border inside the view with some paper visible
-around it. A border that touches the edge of the frame is reported as `invalid field view`.
