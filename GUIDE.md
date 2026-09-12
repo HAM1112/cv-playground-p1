@@ -169,13 +169,18 @@ another program). Everything else goes to standard error.
 uv run gridcheck cam --debug
 ```
 
-Opens the camera, shows a window, prints the status **every time it changes** (a majority vote
-over the last 5 frames stops flicker). Keys inside the window: `q` quits, `s` saves the current
-raw frame to `captures/`.
+First it looks for connected cameras (indices 0–4). With one camera it just uses it. With
+several it lists them and asks *"Are you using an external webcam? [y/N]"*: `y` picks the
+external one (or asks which index if there are several), `n` uses the built-in camera
+(index 0). Pass `--device N` to skip the question.
+
+Then it opens the camera, shows a window, prints the status **every time it changes** (a
+majority vote over the last 5 frames stops flicker). Keys inside the window: `q` quits, `s`
+saves the current raw frame to `captures/`.
 
 | Option              | Purpose                                                         |
 |---------------------|-----------------------------------------------------------------|
-| `--device N`        | camera index (0 = default/built-in)                             |
+| `--device N`        | camera index (0 = built-in); omit to be asked                   |
 | `--width`, `--height` | requested frame size (default 1280×720)                       |
 | `--debug`           | draw the border, boxes, probabilities and, when invalid, the reason |
 | `--no-window`       | headless: only print statuses                                   |

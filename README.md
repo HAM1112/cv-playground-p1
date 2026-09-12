@@ -42,7 +42,7 @@ touching the edge of the frame is reported as `invalid field view`, and `--debug
 | Command | Purpose |
 |---|---|
 | `uv run gridcheck image <file> [--debug] [--save out.png]` | classify one picture; `--debug` shows the overlay and per-box probabilities |
-| `uv run gridcheck cam [--device 0] [--debug]` | live webcam; prints the status when it changes |
+| `uv run gridcheck cam [--debug]` | live camera; lists connected cameras and asks whether you use an external webcam (`--device N` skips the question); prints the status when it changes |
 | `uv run gridcheck train [--epochs 10]` | harvest your photos, build synthetic data if missing, train, save the model |
 | `uv run gridcheck synth [--n 20000] [--samples DIR]` | (re)generate the synthetic dataset; optionally save example frames |
 | `uv run gridcheck harvest <folder> [--sheets DIR]` | cut and auto-label box crops from unsorted photos, with review sheets |

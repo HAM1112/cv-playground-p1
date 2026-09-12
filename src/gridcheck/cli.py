@@ -48,11 +48,63 @@ def cmd_image(args: argparse.Namespace) -> int:
     return 0
 
 
+def _list_cameras(backend: int, max_index: int = 5) -> list[tuple[int, int, int]]:
+    """Return (index, width, height) for every camera index that opens and yields a frame."""
+    found = []
+    try:  # probing unused indices makes OpenCV print warnings; keep the terminal clean
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+    except AttributeError:
+        pass
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i, backend)
+        ok = cap.isOpened()
+        frame = None
+        if ok:
+            ok, frame = cap.read()
+        cap.release()
+        if ok and frame is not None:
+            found.append((i, frame.shape[1], frame.shape[0]))
+    return found
+
+
+def _choose_camera(backend: int) -> int | None:
+    """Ask which camera to use when several are connected. Returns an index or None."""
+    print("looking for cameras ...", file=sys.stderr)
+    cams = _list_cameras(backend)
+    if not cams:
+        print("no camera found", file=sys.stderr)
+        return None
+    if len(cams) == 1:
+        idx, w, h = cams[0]
+        print(f"using the only camera found: index {idx} ({w}x{h})", file=sys.stderr)
+        return idx
+    print("cameras found:", file=sys.stderr)
+    for idx, w, h in cams:
+        note = "  (built-in / default)" if idx == 0 else "  (external webcam?)"
+        print(f"  [{idx}] {w}x{h}{note}", file=sys.stderr)
+    default = cams[0][0]
+    if input(f"Are you using an external webcam? [y/N] ").strip().lower() in {"y", "yes"}:
+        others = [c[0] for c in cams if c[0] != default]
+        if len(others) == 1:
+            return others[0]
+        while True:
+            raw = input(f"which camera index? {others}: ").strip()
+            if raw.isdigit() and int(raw) in others:
+                return int(raw)
+            print("please type one of the listed indices", file=sys.stderr)
+    return default
+
+
 def cmd_cam(args: argparse.Namespace) -> int:
     backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-    cap = cv2.VideoCapture(args.device, backend)
+    device = args.device
+    if device is None:
+        device = _choose_camera(backend)
+        if device is None:
+            return 2
+    cap = cv2.VideoCapture(device, backend)
     if not cap.isOpened():
-        print(f"could not open camera {args.device}", file=sys.stderr)
+        print(f"could not open camera {device}", file=sys.stderr)
         return 2
     if args.width:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -209,7 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
     pi.set_defaults(func=cmd_image)
 
     pc = sub.add_parser("cam", help="classify a live webcam feed")
-    pc.add_argument("--device", type=int, default=0, help="camera index")
+    pc.add_argument("--device", type=int, default=None,
+                    help="camera index; if omitted, connected cameras are listed and you are asked which to use")
     pc.add_argument("--width", type=int, default=1280)
     pc.add_argument("--height", type=int, default=720)
     pc.add_argument("--debug", action="store_true", help="draw the detection overlay")
