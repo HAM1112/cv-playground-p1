@@ -71,7 +71,8 @@ def load_model(path: str | os.PathLike | None = None, device: str | torch.device
     path = Path(path) if path else DEFAULT_MODEL_PATH
     if not path.exists():
         raise FileNotFoundError(
-            f"No trained weights at {path}. Run `gridcheck synth` then `gridcheck train` first."
+            f"No trained model at {path}. Run `uv run gridcheck train` to create it "
+            "(or `git checkout -- models/cellnet.pt` to restore the committed one)."
         )
     dev = pick_device(str(device)) if isinstance(device, str) else (device or pick_device())
     ckpt = torch.load(path, map_location=dev)
