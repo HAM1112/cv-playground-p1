@@ -60,30 +60,49 @@ def train(
     real_share: float = 0.15,
     photos_dir: Path | str | None = None,
 ) -> dict:
+    from .progress import Progress, fmt_secs, stage
+
     data_path = Path(data_path)
+    n_stages = 3
+    t_start = time.time()
+
+    # ---------------------------------------------------------------- 1. photos
+    stage(1, n_stages, "harvesting cell crops from your photos")
     if photos_dir is not None:
         from .harvest import harvest_labeled
 
-        stats = harvest_labeled(photos_dir)
+        stats = harvest_labeled(photos_dir, verbose=True)
+        n_photo_crops = 0
         for folder, st in stats.items():
             if st["photos"]:
-                print(f"photos/{folder}: {st['photos']} photos -> {st['circle']} circle, {st['empty']} empty crops")
+                n_photo_crops += st["circle"] + st["empty"]
+                print(f"  photos/{folder}: {st['photos']} photos -> {st['circle']} circle, {st['empty']} empty crops")
                 if st["no_boxes"]:
                     print(f"  no boxes found in: {', '.join(st['no_boxes'])}")
                 if st["suspicious"]:
                     print(f"  WARNING every box looks filled (should these be in full/?): {', '.join(st['suspicious'])}")
+        if n_photo_crops == 0:
+            print(f"  no photos found under {photos_dir} (put some in full/ and available/ to use them)")
+    else:
+        print("  skipped (--no-photos)")
+
+    # ---------------------------------------------------------------- 2. synthetic data
+    stage(2, n_stages, "synthetic training data")
     if not data_path.exists():
-        print(f"No dataset at {data_path}; generating {n_cells_if_missing} synthetic cells ...")
+        print(f"  no cached dataset at {data_path.name}; generating {n_cells_if_missing} synthetic cells (one-off, a few minutes)")
         X, y, stats = build_synthetic_cells(n_cells_if_missing, seed=seed)
         save_cells(data_path, X, y)
-        print(f"  detect rate {100 * stats['detect_rate']:.1f}%, circle frac {stats['circle_frac']:.2f}")
+        print(f"  saved to {data_path}  (detect rate {100 * stats['detect_rate']:.1f}%, circle fraction {stats['circle_frac']:.2f})")
+    else:
+        print(f"  using cached {data_path.name}")
     X_np, y_np = load_cells(data_path)
+    print(f"  {len(y_np)} synthetic cells loaded")
     Xr, yr = load_real_cells()
     if len(yr):
         # A few hundred real crops would vanish next to 20k synthetic ones, so repeat
         # them until they make up about `real_share` of the training data.
         repeat = max(1, int(round(real_share * len(y_np) / ((1 - real_share) * len(yr)))))
-        print(f"Adding {len(yr)} real crops x{repeat}.")
+        print(f"  {len(yr)} real crops repeated x{repeat} so they are ~{100 * real_share:.0f}% of the data")
         X_np = np.concatenate([X_np] + [Xr] * repeat)
         y_np = np.concatenate([y_np] + [yr] * repeat)
 
@@ -97,19 +116,25 @@ def train(
     y = torch.from_numpy(y_np).long()
     Xtr, ytr, Xval, yval = X[tr_idx], y[tr_idx], X[val_idx], y[val_idx]
 
+    # ---------------------------------------------------------------- 3. training
+    stage(3, n_stages, "training CellNet")
     dev = pick_device(device)
     model = CellNet().to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs))
-    print(f"Training on {dev} | train={len(ytr)} val={len(yval)} | params={sum(p.numel() for p in model.parameters())}")
+    n_batches = (len(ytr) + batch_size - 1) // batch_size
+    print(f"  device {dev} | {len(ytr)} train / {len(yval)} validation cells | "
+          f"{epochs} epochs x {n_batches} batches of {batch_size} | {sum(p.numel() for p in model.parameters())} parameters")
 
-    best_acc, best_state = 0.0, None
+    best_acc, best_state, best_epoch = 0.0, None, 0
     t0 = time.time()
     for epoch in range(1, epochs + 1):
         model.train()
         order = torch.randperm(len(ytr), generator=gen)
         total_loss = 0.0
-        for i in range(0, len(order), batch_size):
+        seen = 0
+        bar = Progress(n_batches, f"  epoch {epoch:2d}/{epochs}")
+        for b, i in enumerate(range(0, len(order), batch_size), start=1):
             idx = order[i:i + batch_size]
             xb = _augment(Xtr[idx], gen).to(dev)
             yb = ytr[idx].to(dev)
@@ -118,14 +143,24 @@ def train(
             loss.backward()
             opt.step()
             total_loss += loss.item() * len(idx)
+            seen += len(idx)
+            bar.update(b, extra=f"loss {total_loss / seen:.4f}")
         sched.step()
         acc = evaluate(model, Xval, yval, dev)
-        print(f"epoch {epoch:2d} | loss {total_loss / len(ytr):.4f} | val acc {100 * acc:.2f}% | {time.time() - t0:.0f}s")
-        if acc >= best_acc:
-            best_acc = acc
+        improved = acc >= best_acc
+        if improved:
+            best_acc, best_epoch = acc, epoch
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        elapsed = time.time() - t0
+        eta = elapsed / epoch * (epochs - epoch)
+        bar.close(
+            f"  epoch {epoch:2d}/{epochs}  loss {total_loss / len(ytr):.4f}  "
+            f"val acc {100 * acc:6.2f}%{'  *best*' if improved else ''}  "
+            f"[{fmt_secs(elapsed)} elapsed, ~{fmt_secs(eta)} left]"
+        )
 
     model.load_state_dict(best_state)
     save_model(model.cpu(), out_path)
-    print(f"Saved best model (val acc {100 * best_acc:.2f}%) to {out_path}")
+    print(f"\nDone in {fmt_secs(time.time() - t_start)}. Best validation accuracy {100 * best_acc:.2f}% "
+          f"(epoch {best_epoch}) saved to {out_path}")
     return {"val_acc": best_acc, "n_train": len(ytr), "n_val": len(yval), "device": str(dev)}

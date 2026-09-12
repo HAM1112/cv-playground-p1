@@ -32,12 +32,15 @@ def build_synthetic_cells(
 
     Returns (crops uint8 (N, 64, 64), labels int64 (N,), stats).
     """
+    from .progress import Progress
+
     rng = np.random.default_rng(seed)
     crops: list[np.ndarray] = []
     labels: list[np.ndarray] = []
     n_boards = n_detected = 0
     total = 0
     t0 = time.time()
+    bar = Progress(n_cells, "  rendering boards") if log_every else None
     while total < n_cells:
         frame, gt, _corners = render_board(rng)
         n_boards += 1
@@ -47,12 +50,13 @@ def build_synthetic_cells(
             crops.append(res.crops)
             labels.append(gt.reshape(-1).astype(np.int64))
             total += res.n_cells
-        if log_every and n_boards % log_every == 0:
-            print(
-                f"  boards={n_boards} detected={n_detected} "
-                f"({100.0 * n_detected / n_boards:.1f}%) cells={total} "
-                f"[{time.time() - t0:.0f}s]"
-            )
+        if bar is not None:
+            bar.update(total, extra=f"boards {n_boards}, detected {100.0 * n_detected / n_boards:.0f}%")
+    if bar is not None:
+        bar.close(
+            f"  rendered {n_boards} boards, {n_detected} detected "
+            f"({100.0 * n_detected / n_boards:.1f}%), {total} cells in {time.time() - t0:.0f}s"
+        )
     X = np.concatenate(crops, axis=0)
     y = np.concatenate(labels, axis=0)
     stats = {

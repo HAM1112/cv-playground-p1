@@ -93,7 +93,11 @@ def _photo_cells(gray: np.ndarray) -> list[np.ndarray]:
     return [crop_quad(gray, q) for q in _cell_quads(_binarize(gray))]
 
 
-def harvest_labeled(photos_dir: Path | str = DEFAULT_PHOTOS_DIR, out_dir: Path | str = DEFAULT_REAL_DIR) -> dict:
+def harvest_labeled(
+    photos_dir: Path | str = DEFAULT_PHOTOS_DIR,
+    out_dir: Path | str = DEFAULT_REAL_DIR,
+    verbose: bool = False,
+) -> dict:
     """Turn photos sorted into <photos_dir>/full and <photos_dir>/available into cell crops.
 
     full/      -> every box holds a circle, so every crop is labelled `circle`.
@@ -117,14 +121,20 @@ def harvest_labeled(photos_dir: Path | str = DEFAULT_PHOTOS_DIR, out_dir: Path |
         stats[folder] = st
         if not d.is_dir():
             continue
-        for p in sorted(d.iterdir()):
-            if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
-                continue
+        files = [p for p in sorted(d.iterdir()) if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}]
+        bar = None
+        if verbose and files:
+            from .progress import Progress
+
+            bar = Progress(len(files), f"  {folder}/")
+        for k_photo, p in enumerate(files, start=1):
             img = cv2.imread(str(p))
             if img is None:
                 continue
             st["photos"] += 1
             crops = [c for c in _photo_cells(to_gray(img)) if looks_like_paper(c)]
+            if bar is not None:
+                bar.update(k_photo, extra=f"{p.name}: {len(crops)} boxes", force=True)
             if not crops:
                 st["no_boxes"].append(p.name)
                 continue
@@ -141,6 +151,8 @@ def harvest_labeled(photos_dir: Path | str = DEFAULT_PHOTOS_DIR, out_dir: Path |
                 st[name] += 1
             if folder == "available" and all(labels):
                 st["suspicious"].append(p.name)   # labelled available but every box looks filled
+        if bar is not None:
+            bar.close(f"  {folder}/: {st['photos']} photos processed")
     return stats
 
 
