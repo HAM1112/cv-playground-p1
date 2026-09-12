@@ -3,6 +3,10 @@
 Version 1 of a small computer-vision project: point a camera at a white sheet with a
 bordered grid of boxes and get one of three answers.
 
+> New here? Read **[GUIDE.md](GUIDE.md)** — a top-to-bottom walkthrough for beginners: every
+> command, how to set up and run training, the libraries used, where data is stored and how
+> each module works.
+
 | Output               | Meaning                                              |
 |----------------------|------------------------------------------------------|
 | `Full`               | every box contains a black circle                    |
