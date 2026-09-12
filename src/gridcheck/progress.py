@@ -19,31 +19,39 @@ def _enable_windows_ansi() -> bool:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-        mode = ctypes.c_uint32()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        done = False
+        for std_handle in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            handle = kernel32.GetStdHandle(std_handle)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                done |= bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+        return done
     except Exception:  # pragma: no cover - best effort only
         return False
 
 
 USE_COLOR = bool(os.environ.get("FORCE_COLOR")) or (
-    sys.stdout.isatty() and not os.environ.get("NO_COLOR") and _enable_windows_ansi()
+    (sys.stdout.isatty() or sys.stderr.isatty()) and not os.environ.get("NO_COLOR") and _enable_windows_ansi()
 )
+
+# Log lines (banner, ticks, warnings ...) go to stderr so that stdout carries only the
+# program's real output: the verdict string of `image` / `cam`, which scripts can parse.
+LOG = sys.stderr
 
 _CODES = {
     "reset": "\033[0m", "bold": "\033[1m", "dim": "\033[2m",
     "red": "\033[31m", "green": "\033[32m", "yellow": "\033[33m",
     "blue": "\033[34m", "magenta": "\033[35m", "cyan": "\033[36m", "white": "\033[37m",
-    "bright_green": "\033[92m", "bright_yellow": "\033[93m", "bright_cyan": "\033[96m",
+    "bright_red": "\033[91m", "bright_green": "\033[92m", "bright_yellow": "\033[93m",
+    "bright_blue": "\033[94m", "bright_magenta": "\033[95m", "bright_cyan": "\033[96m",
 }
 
 
 def _sym(unicode_char: str, ascii_fallback: str) -> str:
     """Use the nice symbol only if stdout can encode it (a redirected file may be cp1252)."""
     try:
-        unicode_char.encode(sys.stdout.encoding or "ascii")
+        unicode_char.encode(sys.stderr.encoding or "ascii")
         return unicode_char
     except (UnicodeEncodeError, LookupError):
         return ascii_fallback
@@ -66,24 +74,57 @@ def fmt_secs(s: float) -> str:
     return f"{s // 60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
 
 
+STATUS_STYLES = {
+    "Full": ("bold", "bright_red"),
+    "Available": ("bold", "bright_green"),
+    "invalid field view": ("bold", "bright_yellow"),
+}
+
+
+def status_text(status: str) -> str:
+    """The verdict string in its colour: Full red, Available green, invalid yellow."""
+    return c(status, *STATUS_STYLES.get(status, ("bold",)))
+
+
+def banner(command: str, subtitle: str = "") -> None:
+    """One-line header printed when a command starts."""
+    line = c("gridcheck", "bold", "bright_cyan") + " " + c(command, "bold")
+    if subtitle:
+        line += "  " + c(subtitle, "dim")
+    print(line, file=LOG, flush=True)
+
+
+def prompt(question: str) -> str:
+    """input() with the question shown in colour."""
+    return input(c("? ", "bright_magenta") + c(question, "bold") + " ").strip()
+
+
+def path_text(p) -> str:
+    return c(str(p), "bright_cyan")
+
+
+def num(n) -> str:
+    return c(str(n), "bold", "bright_yellow")
+
+
 def stage(n: int, total: int, title: str) -> None:
-    print("\n" + c(f"[{n}/{total}]", "bold", "bright_cyan") + " " + c(title, "bold"), flush=True)
+    print("\n" + c(f"[{n}/{total}]", "bold", "bright_cyan") + " " + c(title, "bold"), file=LOG, flush=True)
 
 
 def info(text: str) -> None:
-    print("  " + c(text, "dim"), flush=True)
+    print("  " + c(text, "dim"), file=LOG, flush=True)
 
 
 def ok(text: str) -> None:
-    print("  " + c(TICK + " ", "bright_green") + text, flush=True)
+    print("  " + c(TICK + " ", "bright_green") + text, file=LOG, flush=True)
 
 
 def warn(text: str) -> None:
-    print("  " + c(WARN + " " + text, "bright_yellow"), flush=True)
+    print("  " + c(WARN + " " + text, "bright_yellow"), file=LOG, flush=True)
 
 
 def fail(text: str) -> None:
-    print("  " + c(CROSS + " " + text, "red"), flush=True)
+    print("  " + c(CROSS + " " + text, "red"), file=LOG, flush=True)
 
 
 class Progress:
@@ -117,15 +158,15 @@ class Progress:
                 f"{int(done)}/{int(self.total)}  {c(f'{fmt_secs(elapsed)} elapsed, {eta_txt}', 'dim')}  "
                 f"{c(extra, 'cyan')}")
         pad = " " * max(0, self.last_len - plain_len)
-        sys.stdout.write("\r" + line + pad)
-        sys.stdout.flush()
+        LOG.write("\r" + line + pad)
+        LOG.flush()
         self.last_len = plain_len
 
     def close(self, final: str | None = None, plain_len: int | None = None) -> None:
         if final is not None:
             n = plain_len if plain_len is not None else len(final)
             pad = " " * max(0, self.last_len - n)
-            sys.stdout.write("\r" + final + pad + "\n")
+            LOG.write("\r" + final + pad + "\n")
         else:
-            sys.stdout.write("\n")
-        sys.stdout.flush()
+            LOG.write("\n")
+        LOG.flush()

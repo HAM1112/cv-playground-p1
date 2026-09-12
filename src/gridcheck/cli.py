@@ -18,26 +18,31 @@ import cv2
 import numpy as np
 
 from .infer import INVALID, Classifier, draw_debug
+from .progress import banner, c, fail, info, num, ok, path_text, prompt, status_text, warn
 
 VOTE_WINDOW = 5
 
 
 def cmd_image(args: argparse.Namespace) -> int:
+    banner("image", str(args.path))
     frame = cv2.imread(str(args.path), cv2.IMREAD_COLOR)
     if frame is None:
-        print(f"could not read image: {args.path}", file=sys.stderr)
+        fail(f"could not read image: {args.path}")
         return 2
     clf = Classifier(args.model, args.device)
     verdict = clf.classify_frame(frame, pad_frac=0.0 if args.no_pad else 0.05)
-    print(verdict.status)
+    print(status_text(verdict.status), flush=True)
     if args.debug:
         if verdict.reason:
-            print(f"  why invalid: {verdict.reason}", file=sys.stderr)
+            warn(f"why invalid: {verdict.reason}")
         if verdict.board is not None:
-            print(f"  grid {verdict.rows}x{verdict.cols}, {verdict.n_filled}/{verdict.n_cells} filled",
-                  file=sys.stderr)
-            print("  P(circle):\n" + np.array2string(verdict.probs, precision=2, suppress_small=True),
-                  file=sys.stderr)
+            ok(f"grid {num(verdict.rows)}x{num(verdict.cols)}, "
+               f"{num(verdict.n_filled)}/{num(verdict.n_cells)} filled")
+            info("P(circle) per box:")
+            for row in verdict.probs:
+                print("    " + "  ".join(
+                    c(f"{p:.2f}", "bright_red" if p >= 0.5 else "bright_green") for p in row),
+                    file=sys.stderr)
         vis = draw_debug(frame, verdict)
         if args.save:
             cv2.imwrite(str(args.save), vis)
@@ -57,45 +62,46 @@ def _list_cameras(backend: int, max_index: int = 5) -> list[tuple[int, int, int]
         pass
     for i in range(max_index):
         cap = cv2.VideoCapture(i, backend)
-        ok = cap.isOpened()
+        opened = cap.isOpened()
         frame = None
-        if ok:
-            ok, frame = cap.read()
+        if opened:
+            opened, frame = cap.read()
         cap.release()
-        if ok and frame is not None:
+        if opened and frame is not None:
             found.append((i, frame.shape[1], frame.shape[0]))
     return found
 
 
 def _choose_camera(backend: int) -> int | None:
     """Ask which camera to use when several are connected. Returns an index or None."""
-    print("looking for cameras ...", file=sys.stderr)
+    info("looking for cameras ...")
     cams = _list_cameras(backend)
     if not cams:
-        print("no camera found", file=sys.stderr)
+        fail("no camera found")
         return None
     if len(cams) == 1:
         idx, w, h = cams[0]
-        print(f"using the only camera found: index {idx} ({w}x{h})", file=sys.stderr)
+        ok(f"using the only camera found: index {num(idx)} ({w}x{h})")
         return idx
-    print("cameras found:", file=sys.stderr)
+    ok(f"{num(len(cams))} cameras found:")
     for idx, w, h in cams:
-        note = "  (built-in / default)" if idx == 0 else "  (external webcam?)"
-        print(f"  [{idx}] {w}x{h}{note}", file=sys.stderr)
+        note = "(built-in / default)" if idx == 0 else "(external webcam?)"
+        print(f"    {c(f'[{idx}]', 'bold', 'bright_cyan')} {w}x{h}  {c(note, 'dim')}", file=sys.stderr)
     default = cams[0][0]
-    if input(f"Are you using an external webcam? [y/N] ").strip().lower() in {"y", "yes"}:
-        others = [c[0] for c in cams if c[0] != default]
+    if prompt("Are you using an external webcam? [y/N]").lower() in {"y", "yes"}:
+        others = [cam[0] for cam in cams if cam[0] != default]
         if len(others) == 1:
             return others[0]
         while True:
-            raw = input(f"which camera index? {others}: ").strip()
+            raw = prompt(f"which camera index? {others}:")
             if raw.isdigit() and int(raw) in others:
                 return int(raw)
-            print("please type one of the listed indices", file=sys.stderr)
+            warn("please type one of the listed indices")
     return default
 
 
 def cmd_cam(args: argparse.Namespace) -> int:
+    banner("cam", "live camera")
     backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
     device = args.device
     if device is None:
@@ -104,7 +110,7 @@ def cmd_cam(args: argparse.Namespace) -> int:
             return 2
     cap = cv2.VideoCapture(device, backend)
     if not cap.isOpened():
-        print(f"could not open camera {device}", file=sys.stderr)
+        fail(f"could not open camera {device}")
         return 2
     if args.width:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -116,22 +122,25 @@ def cmd_cam(args: argparse.Namespace) -> int:
     last_printed: str | None = None
     last_reason: str | None = None
     snap_dir = Path(args.snapshots)
-    print("keys: q = quit, s = save a snapshot of the current frame", file=sys.stderr)
+    ok(f"camera {num(device)} open; model loaded on {clf.device}")
+    info(f"keys: {c('q', 'bold')} = quit, {c('s', 'bold')} = save a snapshot of the current frame")
+    info("status is printed whenever it changes:")
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                print("camera read failed", file=sys.stderr)
+            got, frame = cap.read()
+            if not got:
+                fail("camera read failed")
                 break
             verdict = clf.classify_frame(frame)
             votes.append(verdict.status)
             if len(votes) == VOTE_WINDOW:
                 stable = Counter(votes).most_common(1)[0][0]
                 if stable != last_printed:
-                    print(stable, flush=True)
+                    stamp = c(time.strftime("%H:%M:%S"), "dim")
+                    print(f"{stamp}  {status_text(stable)}", flush=True)
                     last_printed = stable
             if args.debug and verdict.reason and verdict.reason != last_reason:
-                print(f"  why invalid: {verdict.reason}", file=sys.stderr, flush=True)
+                warn(f"why invalid: {verdict.reason}")
                 last_reason = verdict.reason
             if not args.no_window:
                 vis = draw_debug(frame, verdict) if args.debug else frame
@@ -143,7 +152,7 @@ def cmd_cam(args: argparse.Namespace) -> int:
                     snap_dir.mkdir(parents=True, exist_ok=True)
                     path = snap_dir / f"snap_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
                     cv2.imwrite(str(path), frame)
-                    print(f"  saved {path}", file=sys.stderr, flush=True)
+                    ok(f"saved {path_text(path)}")
     finally:
         cap.release()
         cv2.destroyAllWindows()
@@ -154,6 +163,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
     from .dataset import DEFAULT_CACHE, build_synthetic_cells, save_cells
     from .synth import render_board
 
+    banner("synth", "synthetic training data")
     if args.samples:
         out = Path(args.samples)
         out.mkdir(parents=True, exist_ok=True)
@@ -161,17 +171,17 @@ def cmd_synth(args: argparse.Namespace) -> int:
         for i in range(args.n_samples):
             frame, labels, _ = render_board(rng)
             cv2.imwrite(str(out / f"board_{i:03d}_{labels.shape[0]}x{labels.shape[1]}_{int(labels.sum())}filled.png"), frame)
-        print(f"wrote {args.n_samples} sample frames to {out}")
+        ok(f"wrote {num(args.n_samples)} sample frames to {path_text(out)}")
         if args.n == 0:
             return 0
 
-    print(f"Generating ~{args.n} synthetic cells (seed {args.seed}) ...")
+    info(f"generating ~{args.n} synthetic cells (seed {args.seed}) ...")
     X, y, stats = build_synthetic_cells(args.n, seed=args.seed)
     save_cells(args.out or DEFAULT_CACHE, X, y)
-    print(f"boards rendered: {stats['boards']}, detected: {stats['detected']} "
-          f"({100 * stats['detect_rate']:.1f}%), cells: {stats['cells']}, "
-          f"circle fraction: {stats['circle_frac']:.2f}, {stats['seconds']:.0f}s")
-    print(f"saved to {args.out or DEFAULT_CACHE}")
+    ok(f"boards rendered: {num(stats['boards'])}, detected: {num(stats['detected'])} "
+       f"({100 * stats['detect_rate']:.1f}%), cells: {num(stats['cells'])}, "
+       f"circle fraction: {stats['circle_frac']:.2f}, {stats['seconds']:.0f}s")
+    ok(f"saved to {path_text(args.out or DEFAULT_CACHE)}")
     return 0
 
 
@@ -182,6 +192,7 @@ def cmd_train(args: argparse.Namespace) -> int:
 
     from .harvest import DEFAULT_PHOTOS_DIR
 
+    banner("train", "photos -> synthetic data -> CellNet")
     train(
         data_path=args.data or DEFAULT_CACHE,
         out_path=args.out or DEFAULT_MODEL_PATH,
@@ -199,17 +210,22 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     from .dataset import DEFAULT_REAL_DIR
     from .harvest import harvest
 
+    banner("harvest", str(args.image_dir))
     stats = harvest(args.image_dir, args.out or DEFAULT_REAL_DIR, args.sheets)
-    print(f"images: {stats['images']}, circle crops: {stats['circle']}, empty crops: {stats['empty']}")
-    print(f"saved under {args.out or DEFAULT_REAL_DIR}" + (f", contact sheets in {args.sheets}" if args.sheets else ""))
+    ok(f"images: {num(stats['images'])}, circle crops: {c(str(stats['circle']), 'bright_red')}, "
+       f"empty crops: {c(str(stats['empty']), 'bright_green')}")
+    ok(f"saved under {path_text(args.out or DEFAULT_REAL_DIR)}"
+       + (f", contact sheets in {path_text(args.sheets)}" if args.sheets else ""))
     return 0
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
     from .reset import plan_reset, run_reset
 
+    banner("reset", "back to a fresh project")
+
     def ask(question: str) -> bool:
-        return input(question).strip().lower() in {"y", "yes"}
+        return prompt(question).lower() in {"y", "yes"}
 
     # Decide about the photos first: flags win, otherwise ask.
     n_photos = len(plan_reset(include_photos=True).get("your training photos", []))
@@ -219,31 +235,31 @@ def cmd_reset(args: argparse.Namespace) -> int:
         include_photos = False
     else:
         include_photos = ask(
-            f"you have {n_photos} training photo(s) in data/photos. Remove them as well? [y/N] "
+            f"you have {n_photos} training photo(s) in data/photos. Remove them as well? [y/N]"
         )
 
     plan = plan_reset(include_photos=include_photos)
     total = sum(len(v) for v in plan.values())
     if total == 0:
-        print("nothing to remove: the project is already fresh")
+        ok("nothing to remove: the project is already fresh")
         return 0
-    print("this will delete:")
+    warn("this will delete:")
     for kind, paths in plan.items():
         if paths:
             shown = ", ".join(p.name for p in paths[:3]) + (", ..." if len(paths) > 3 else "")
-            print(f"  {kind}: {len(paths)} file(s)  ({shown})")
+            print(f"    {c('-', 'bright_red')} {c(kind, 'bold')}: {num(len(paths))} file(s)  {c('(' + shown + ')', 'dim')}",
+                  file=sys.stderr)
     if not include_photos and n_photos:
-        print(f"  (your {n_photos} photo(s) in data/photos are kept)")
+        ok(f"your {num(n_photos)} photo(s) in data/photos are kept")
     if args.dry_run:
-        print("dry run, nothing deleted")
+        info("dry run, nothing deleted")
         return 0
     if not args.yes:
-        answer = input("proceed? [y/N] ").strip().lower()
-        if answer not in {"y", "yes"}:
-            print("cancelled")
+        if prompt("proceed? [y/N]").lower() not in {"y", "yes"}:
+            info("cancelled")
             return 1
     n = run_reset(plan)
-    print(f"removed {n} file(s). Run `gridcheck train` to build everything again.")
+    ok(f"removed {num(n)} file(s). Run {c('uv run gridcheck train', 'bold')} to build everything again.")
     return 0
 
 
@@ -309,7 +325,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except FileNotFoundError as e:
+        fail(str(e))
+        return 2
+    except KeyboardInterrupt:
+        print()
+        info("interrupted")
+        return 130
 
 
 if __name__ == "__main__":
