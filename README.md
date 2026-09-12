@@ -81,6 +81,17 @@ are regenerated with fixed names. Options: `--epochs N`, `--photos DIR`, `--no-p
 Photos whose border runs off the frame still contribute: every clean box in them is used.
 The command warns about `available/` photos in which every box looks filled.
 
+## Starting over
+
+```
+uv run gridcheck reset            # shows what will go, asks y/N
+uv run gridcheck reset --dry-run  # only list
+uv run gridcheck reset --photos   # also delete your photos in data/photos
+```
+
+Removes the trained model, the synthetic dataset, harvested crops and camera snapshots.
+Your photos are kept unless `--photos` is given. `gridcheck train` rebuilds everything.
+
 Unsorted photos can be cut into crops for manual sorting with
 `uv run gridcheck harvest some/folder --sheets review/`, which also writes contact sheets.
 

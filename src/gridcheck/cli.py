@@ -153,6 +153,34 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reset(args: argparse.Namespace) -> int:
+    from .reset import plan_reset, run_reset
+
+    plan = plan_reset(include_photos=args.photos)
+    total = sum(len(v) for v in plan.values())
+    if total == 0:
+        print("nothing to remove: the project is already fresh")
+        return 0
+    print("this will delete:")
+    for kind, paths in plan.items():
+        if paths:
+            shown = ", ".join(p.name for p in paths[:3]) + (", ..." if len(paths) > 3 else "")
+            print(f"  {kind}: {len(paths)} file(s)  ({shown})")
+    if not args.photos:
+        print("  (your photos in data/photos are kept; add --photos to delete them too)")
+    if args.dry_run:
+        print("dry run, nothing deleted")
+        return 0
+    if not args.yes:
+        answer = input("proceed? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("cancelled")
+            return 1
+    n = run_reset(plan)
+    print(f"removed {n} file(s). Run `gridcheck train` to build everything again.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gridcheck", description="Grid occupancy checker.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -190,6 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("--out", help="output root (default data/real)")
     ph.add_argument("--sheets", help="write contact sheets for review to this directory")
     ph.set_defaults(func=cmd_harvest)
+
+    pr = sub.add_parser("reset", help="delete the trained model and all generated data (fresh project)")
+    pr.add_argument("--photos", action="store_true", help="also delete your photos in data/photos")
+    pr.add_argument("--yes", "-y", action="store_true", help="do not ask for confirmation")
+    pr.add_argument("--dry-run", action="store_true", help="only show what would be deleted")
+    pr.set_defaults(func=cmd_reset)
 
     pt = sub.add_parser("train", help="train the cell classifier")
     pt.add_argument("--epochs", type=int, default=10)
