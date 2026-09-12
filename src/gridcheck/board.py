@@ -446,6 +446,11 @@ def find_board(frame: np.ndarray, pad_frac: float = 0.0) -> BoardResult | None:
 
     Returns None when no usable grid is found (-> "invalid field view").
     """
+    return find_board_explained(frame, pad_frac)[0]
+
+
+def find_board_explained(frame: np.ndarray, pad_frac: float = 0.0) -> tuple[BoardResult | None, str]:
+    """Like find_board, but also returns a short reason when nothing is found."""
     gray = to_gray(frame)
     px = py = 0
     if pad_frac > 0:
@@ -454,8 +459,11 @@ def find_board(frame: np.ndarray, pad_frac: float = 0.0) -> BoardResult | None:
         gray = cv2.copyMakeBorder(gray, py, py, px, px, cv2.BORDER_CONSTANT, value=255)
     binary = _binarize(gray)
     best: tuple[tuple[int, float], BoardResult] | None = None
-    for corners in _candidate_quads(binary):
+    candidates = _candidate_quads(binary)
+    n_probe = n_grid = 0
+    for corners in candidates:
         if _lines_continue_past_corners(binary, corners):
+            n_probe += 1
             continue
         # A generous margin copes with wobbly hand-drawn borders; a tight one with
         # boards drawn close to the edge of the sheet. Try generous first.
@@ -466,6 +474,7 @@ def find_board(frame: np.ndarray, pad_frac: float = 0.0) -> BoardResult | None:
             if analysed is not None:
                 break
         if analysed is None:
+            n_grid += 1
             continue
         row_cells, col_cells = analysed
         boxes, crops = _crop_cells(warped, row_cells, col_cells)
@@ -490,4 +499,10 @@ def find_board(frame: np.ndarray, pad_frac: float = 0.0) -> BoardResult | None:
         score = (result.n_cells, -area)
         if best is None or score > best[0]:
             best = (score, result)
-    return best[1] if best else None
+    if best:
+        return best[1], "ok"
+    if not candidates:
+        return None, "no rectangular border found (not in view, cut off by the frame edge, or too little contrast)"
+    if n_grid == 0 and n_probe:
+        return None, f"{n_probe} box(es) found but their lines continue past the corners: only part of a bigger grid is visible"
+    return None, f"{len(candidates)} rectangle(s) found but none contains a clean grid of uniform boxes with a dark border"

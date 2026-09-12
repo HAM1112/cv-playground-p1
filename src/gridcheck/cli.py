@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections import Counter, deque
 from pathlib import Path
 
@@ -30,6 +31,8 @@ def cmd_image(args: argparse.Namespace) -> int:
     verdict = clf.classify_frame(frame, pad_frac=0.0 if args.no_pad else 0.05)
     print(verdict.status)
     if args.debug:
+        if verdict.reason:
+            print(f"  why invalid: {verdict.reason}", file=sys.stderr)
         if verdict.board is not None:
             print(f"  grid {verdict.rows}x{verdict.cols}, {verdict.n_filled}/{verdict.n_cells} filled",
                   file=sys.stderr)
@@ -59,7 +62,9 @@ def cmd_cam(args: argparse.Namespace) -> int:
     clf = Classifier(args.model, args.device_torch)
     votes: deque[str] = deque(maxlen=VOTE_WINDOW)
     last_printed: str | None = None
-    print("press q to quit", file=sys.stderr)
+    last_reason: str | None = None
+    snap_dir = Path(args.snapshots)
+    print("keys: q = quit, s = save a snapshot of the current frame", file=sys.stderr)
     try:
         while True:
             ok, frame = cap.read()
@@ -73,11 +78,20 @@ def cmd_cam(args: argparse.Namespace) -> int:
                 if stable != last_printed:
                     print(stable, flush=True)
                     last_printed = stable
+            if args.debug and verdict.reason and verdict.reason != last_reason:
+                print(f"  why invalid: {verdict.reason}", file=sys.stderr, flush=True)
+                last_reason = verdict.reason
             if not args.no_window:
                 vis = draw_debug(frame, verdict) if args.debug else frame
                 cv2.imshow("gridcheck", vis)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
                     break
+                if key == ord("s"):
+                    snap_dir.mkdir(parents=True, exist_ok=True)
+                    path = snap_dir / f"snap_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+                    cv2.imwrite(str(path), frame)
+                    print(f"  saved {path}", file=sys.stderr, flush=True)
     finally:
         cap.release()
         cv2.destroyAllWindows()
@@ -155,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--height", type=int, default=720)
     pc.add_argument("--debug", action="store_true", help="draw the detection overlay")
     pc.add_argument("--no-window", action="store_true", help="headless: print status only")
+    pc.add_argument("--snapshots", default="captures", help="folder for frames saved with the s key")
     pc.add_argument("--model", help="path to cellnet.pt")
     pc.add_argument("--device-torch", dest="device_torch", help="torch device (cpu / cuda)")
     pc.set_defaults(func=cmd_cam)

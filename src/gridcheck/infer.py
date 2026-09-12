@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import torch
 
-from .board import BoardResult, find_board
+from .board import BoardResult, find_board_explained
 from .model import load_model, pick_device, preprocess
 
 FULL = "Full"
@@ -25,6 +25,7 @@ class Verdict:
     filled: np.ndarray | None = None      # (rows, cols) bool
     probs: np.ndarray | None = None       # (rows, cols) P(circle)
     board: BoardResult | None = None
+    reason: str = ""                      # why the view is invalid (empty when valid)
 
     @property
     def n_filled(self) -> int:
@@ -50,9 +51,9 @@ class Classifier:
         return probs.cpu().numpy()
 
     def classify_frame(self, frame: np.ndarray, pad_frac: float = 0.0) -> Verdict:
-        board = find_board(frame, pad_frac=pad_frac)
+        board, reason = find_board_explained(frame, pad_frac=pad_frac)
         if board is None:
-            return Verdict(INVALID)
+            return Verdict(INVALID, reason=reason)
         probs = self.predict_cells(board.crops).reshape(board.rows, board.cols)
         filled = probs >= CIRCLE_THRESHOLD
         status = FULL if filled.all() else AVAILABLE
@@ -90,4 +91,10 @@ def draw_debug(frame: np.ndarray, verdict: Verdict) -> np.ndarray:
     (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8 * scale, thick)
     cv2.rectangle(out, (8, 8), (16 + tw, 20 + th), (0, 0, 0), -1)
     cv2.putText(out, text, (12, 14 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.8 * scale, color, thick, cv2.LINE_AA)
+    if verdict.reason:
+        (rw, rh), _ = cv2.getTextSize(verdict.reason, cv2.FONT_HERSHEY_SIMPLEX, 0.5 * scale, 1)
+        y0 = 26 + th
+        cv2.rectangle(out, (8, y0), (16 + rw, y0 + rh + 10), (0, 0, 0), -1)
+        cv2.putText(out, verdict.reason, (12, y0 + rh + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * scale,
+                    (200, 200, 200), 1, cv2.LINE_AA)
     return out
