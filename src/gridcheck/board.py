@@ -20,7 +20,9 @@ import numpy as np
 CROP_SIZE = 64          # cell crops are resized to CROP_SIZE x CROP_SIZE grayscale
 WARP_WIDTH = 800        # width of the top-down canvas
 WARP_GROW_PX = 3        # grow the quad by at least this many frame px per side before warping
-WARP_GROW_FRAC = 0.012  # ... or by this fraction of its longer side, whichever is larger
+WARP_GROW_FRAC = 0.03   # ... or by this fraction of its longer side, whichever is larger
+                        # (wobbly hand-drawn borders make approxPolyDP cut inside the stroke)
+WARP_GROW_FRACS = (WARP_GROW_FRAC, 0.012)  # tried in order per candidate quad
 GRID_SPAN_FRAC = 0.7    # the grid's ink component must span this much of the canvas
 BLOB_OPEN_FRAC = 0.12   # ink thicker than this (of canvas min side) in both directions is a blob
 INK_DARKNESS_MAX = 0.6  # border ink must be darker than this fraction of the paper level
@@ -29,9 +31,9 @@ CORNER_EXT_MAX_HITS = 3 # >= this many of the 8 probes on ink -> it's a cell of 
 MIN_QUAD_AREA_FRAC = 0.01  # a thin 1-row strip can be small relative to the frame
 EDGE_MARGIN_FRAC = 0.005
 LINE_INK_FRAC = 0.40    # fraction of span that must be ink for a row/col to count as a line
-LINE_MERGE_FRAC = 0.04  # misaligned segments closer than this (of span) merge into one line
+LINE_MERGE_FRAC = 0.05  # wobble/misalignment up to this (of span) still reads as one line
 LINE_OPEN_FRAC = 0.08   # strokes shorter than this (of span) are not grid lines
-LINE_CORE_FRAC = 0.85   # a true grid line reaches this coverage somewhere; blobs do not
+LINE_CORE_FRAC = 0.70   # a true grid line reaches this coverage somewhere; blobs do not
 LINE_MAX_THICK_FRAC = 0.12
 BORDER_TOL_FRAC = 0.06  # first/last line must sit within this of the canvas edge
 MAX_CELLS_PER_AXIS = 12
@@ -156,7 +158,7 @@ def _offset_quad(corners: np.ndarray, e: float) -> np.ndarray:
     return out.astype(np.float32)
 
 
-def _warp(gray: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _warp(gray: np.ndarray, corners: np.ndarray, grow_frac: float = WARP_GROW_FRAC) -> tuple[np.ndarray, np.ndarray]:
     """Top-down canvas of the quad, grown by a few frame pixels on every side so the
     border stroke (approxPolyDP lands on its outer edge, give or take a pixel) sits
     fully inside the canvas with paper visible outside it."""
@@ -166,7 +168,7 @@ def _warp(gray: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray
     left_h = np.linalg.norm(bl - tl)
     right_h = np.linalg.norm(br - tr)
     long_side = max((top_w + bot_w) / 2.0, (left_h + right_h) / 2.0)
-    corners = _offset_quad(corners, max(WARP_GROW_PX, WARP_GROW_FRAC * long_side))
+    corners = _offset_quad(corners, max(WARP_GROW_PX, grow_frac * long_side))
     aspect = ((left_h + right_h) / 2.0) / max((top_w + bot_w) / 2.0, 1e-6)
     W = WARP_WIDTH
     H = int(np.clip(round(W * aspect), 60, 3000))
@@ -234,11 +236,9 @@ def _find_lines(profile: np.ndarray, smear: int = 1, raw: np.ndarray | None = No
     hot = profile > LINE_INK_FRAC
     if not hot.any():
         return None
-    # The canvas is expanded past the quad, so a drawn border has paper on both
-    # sides and never touches the canvas edge. Ink that does touch it is the desk
-    # beyond the edge of a bare sheet, not a border. (Checked on the un-smeared
-    # profile: the smear itself spreads the border out to the edge.)
-    if raw is not None and ((raw[:2] > LINE_INK_FRAC).any() or (raw[-2:] > LINE_INK_FRAC).any()):
+    # Background touching the canvas edge was already stripped (_strip_edge_bands),
+    # but a border must still start a little way in, never at index 0.
+    if raw is not None and (raw[0] > LINE_INK_FRAC or raw[-1] > LINE_INK_FRAC):
         return None
     # The smear already merged misaligned segments; here only bridge tiny gaps.
     merge_px = max(2, smear // 4)
@@ -310,8 +310,47 @@ def _cells_from_lines(lines: list[Line]) -> list[tuple[int, int]] | None:
     return cells
 
 
+def _strip_edge_bands(ink: np.ndarray) -> np.ndarray | None:
+    """Remove dark bands that touch the canvas edge.
+
+    The canvas is grown past the quad, so a drawn border always has some paper
+    outside it. Ink touching the canvas edge is therefore the background beyond
+    the sheet (a bare sheet on a dark desk, or a board drawn right up to the
+    paper's edge). Strip it; if a real border exists it survives as a separate
+    line further in, and a bare sheet is left with nothing.
+    Returns None if the bands are so deep that nothing sensible remains.
+    """
+    h, w = ink.shape
+    out = ink.copy()
+    max_depth_r, max_depth_c = int(0.15 * h), int(0.15 * w)
+    rows = (out > 0).mean(axis=1) > LINE_INK_FRAC
+    cols = (out > 0).mean(axis=0) > LINE_INK_FRAC
+
+    def run_len(flags: np.ndarray, limit: int) -> int:
+        n = 0
+        while n < min(limit, len(flags)) and flags[n]:
+            n += 1
+        return n
+
+    top, bot = run_len(rows, max_depth_r), run_len(rows[::-1], max_depth_r)
+    left, right = run_len(cols, max_depth_c), run_len(cols[::-1], max_depth_c)
+    if top >= max_depth_r or bot >= max_depth_r or left >= max_depth_c or right >= max_depth_c:
+        return None
+    if top:
+        out[:top + 1, :] = 0
+    if bot:
+        out[h - bot - 1:, :] = 0
+    if left:
+        out[:, :left + 1] = 0
+    if right:
+        out[:, w - right - 1:] = 0
+    return out
+
+
 def _analyse_warped(warped: np.ndarray):
-    ink = _grid_ink(warped)
+    ink = _strip_edge_bands(_grid_ink(warped))
+    if ink is None:
+        return None
     row_profile, smear_r, raw_r = _line_profile(ink, horizontal=True)
     col_profile, smear_c, raw_c = _line_profile(ink, horizontal=False)
     h_lines = _find_lines(row_profile, smear_r, raw_r)
@@ -370,13 +409,20 @@ def _lines_continue_past_corners(binary: np.ndarray, corners: np.ndarray) -> boo
         if length < 1e-6:
             continue
         d = d / length
-        # A few px past the corner (approxPolyDP may cut it slightly) but well
-        # inside the paper margin a drawn board is expected to have.
-        ext = float(np.clip(CORNER_EXT_FRAC * length, 4.0, 20.0))
+        # Probe at two distances past the corner. A neighbouring grid line runs on
+        # for a whole cell and hits both; a hand-drawn overshoot at the corner is
+        # short and hits only the near one.
+        near = float(np.clip(CORNER_EXT_FRAC * length, 4.0, 20.0))
+        far = float(np.clip(2.5 * CORNER_EXT_FRAC * length, near + 4.0, 60.0))
         r = max(1, int(0.005 * length))
-        for pt in (p - d * ext, q + d * ext):
+
+        def on_ink(pt: np.ndarray) -> bool:
             x, y = int(round(pt[0])), int(round(pt[1]))
-            if r <= x < w - r and r <= y < h - r and binary[y - r:y + r + 1, x - r:x + r + 1].any():
+            return bool(r <= x < w - r and r <= y < h - r
+                        and binary[y - r:y + r + 1, x - r:x + r + 1].any())
+
+        for base, sign in ((p, -1.0), (q, 1.0)):
+            if on_ink(base + sign * d * near) and on_ink(base + sign * d * far):
                 hits += 1
     return hits >= CORNER_EXT_MAX_HITS
 
@@ -411,8 +457,14 @@ def find_board(frame: np.ndarray, pad_frac: float = 0.0) -> BoardResult | None:
     for corners in _candidate_quads(binary):
         if _lines_continue_past_corners(binary, corners):
             continue
-        warped, M = _warp(gray, corners)
-        analysed = _analyse_warped(warped)
+        # A generous margin copes with wobbly hand-drawn borders; a tight one with
+        # boards drawn close to the edge of the sheet. Try generous first.
+        analysed = None
+        for grow in WARP_GROW_FRACS:
+            warped, M = _warp(gray, corners, grow)
+            analysed = _analyse_warped(warped)
+            if analysed is not None:
+                break
         if analysed is None:
             continue
         row_cells, col_cells = analysed

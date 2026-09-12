@@ -56,3 +56,20 @@ uv run pytest                               # detection + end-to-end tests
 ```
 
 `gridcheck synth --samples some/dir --n 0` writes a few full synthetic frames for inspection.
+
+## Adding real photos
+
+Put webcam photos of the sheet in a folder (e.g. `local_test/`, git-ignored) and run:
+
+```
+uv run gridcheck harvest local_test --sheets review/   # cut + auto-label cell crops
+uv run gridcheck train --epochs 10                      # retrain with real crops mixed in
+```
+
+`harvest` finds every clean box in each photo, even when the board's border runs off the frame,
+saves one 64×64 crop per box under `data/real/{circle,empty}/`, and writes a contact sheet per
+label to the `--sheets` folder. Glance at the sheets and delete any crop that is mislabelled
+before training. Real crops are repeated during training until they make up ~15% of the data.
+
+Framing tips for the camera: keep the whole border inside the view with some paper visible
+around it. A border that touches the edge of the frame is reported as `invalid field view`.

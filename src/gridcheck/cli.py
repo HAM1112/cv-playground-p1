@@ -126,6 +126,16 @@ def cmd_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_harvest(args: argparse.Namespace) -> int:
+    from .dataset import DEFAULT_REAL_DIR
+    from .harvest import harvest
+
+    stats = harvest(args.image_dir, args.out or DEFAULT_REAL_DIR, args.sheets)
+    print(f"images: {stats['images']}, circle crops: {stats['circle']}, empty crops: {stats['empty']}")
+    print(f"saved under {args.out or DEFAULT_REAL_DIR}" + (f", contact sheets in {args.sheets}" if args.sheets else ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gridcheck", description="Grid occupancy checker.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -156,6 +166,12 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--samples", help="also write a few full synthetic frames to this directory")
     ps.add_argument("--n-samples", type=int, default=12)
     ps.set_defaults(func=cmd_synth)
+
+    ph = sub.add_parser("harvest", help="cut and auto-label cell crops from a folder of photos")
+    ph.add_argument("image_dir")
+    ph.add_argument("--out", help="output root (default data/real)")
+    ph.add_argument("--sheets", help="write contact sheets for review to this directory")
+    ph.set_defaults(func=cmd_harvest)
 
     pt = sub.add_parser("train", help="train the cell classifier")
     pt.add_argument("--epochs", type=int, default=10)

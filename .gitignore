@@ -5,3 +5,4 @@ __pycache__/
 data/synth_cells.npz
 data/real/*/*
 !data/real/*/.gitkeep
+local_test/

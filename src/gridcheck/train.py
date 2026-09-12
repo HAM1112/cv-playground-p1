@@ -57,6 +57,7 @@ def train(
     seed: int = 0,
     device: str | None = None,
     n_cells_if_missing: int = 20000,
+    real_share: float = 0.15,
 ) -> dict:
     data_path = Path(data_path)
     if not data_path.exists():
@@ -67,8 +68,12 @@ def train(
     X_np, y_np = load_cells(data_path)
     Xr, yr = load_real_cells()
     if len(yr):
-        print(f"Adding {len(yr)} real crops.")
-        X_np = np.concatenate([X_np, Xr]); y_np = np.concatenate([y_np, yr])
+        # A few hundred real crops would vanish next to 20k synthetic ones, so repeat
+        # them until they make up about `real_share` of the training data.
+        repeat = max(1, int(round(real_share * len(y_np) / ((1 - real_share) * len(yr)))))
+        print(f"Adding {len(yr)} real crops x{repeat}.")
+        X_np = np.concatenate([X_np] + [Xr] * repeat)
+        y_np = np.concatenate([y_np] + [yr] * repeat)
 
     torch.manual_seed(seed)
     gen = torch.Generator().manual_seed(seed)
