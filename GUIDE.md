@@ -194,6 +194,11 @@ uv run gridcheck train
 uv run gridcheck train --epochs 20
 ```
 
+The output is colour-coded: cyan stage headers, green ticks for completed steps, yellow
+warnings, a green progress bar with time remaining, and the validation accuracy in green
+(≥99%), yellow (≥95%) or red. Colours switch off automatically when the output is redirected
+to a file; set the environment variable `NO_COLOR=1` to disable them in the terminal too.
+
 The one command that does everything, in this order:
 
 1. **Harvest your photos.** Looks in `data/photos/full/` and `data/photos/available/`, cuts

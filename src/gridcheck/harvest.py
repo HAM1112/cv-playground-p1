@@ -152,7 +152,11 @@ def harvest_labeled(
             if folder == "available" and all(labels):
                 st["suspicious"].append(p.name)   # labelled available but every box looks filled
         if bar is not None:
-            bar.close(f"  {folder}/: {st['photos']} photos processed")
+            from .progress import TICK, c
+
+            plain = f"  {TICK} {folder}/: {st['photos']} photos processed"
+            bar.close(f"  {c(TICK, 'bright_green')} {c(folder + '/', 'bold')}: {st['photos']} photos processed",
+                      plain_len=len(plain))
     return stats
 
 

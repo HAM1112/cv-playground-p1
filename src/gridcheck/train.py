@@ -60,7 +60,7 @@ def train(
     real_share: float = 0.15,
     photos_dir: Path | str | None = None,
 ) -> dict:
-    from .progress import Progress, fmt_secs, stage
+    from .progress import Progress, c, fmt_secs, info, ok, stage, warn
 
     data_path = Path(data_path)
     n_stages = 3
@@ -76,33 +76,34 @@ def train(
         for folder, st in stats.items():
             if st["photos"]:
                 n_photo_crops += st["circle"] + st["empty"]
-                print(f"  photos/{folder}: {st['photos']} photos -> {st['circle']} circle, {st['empty']} empty crops")
+                ok(f"photos/{folder}: {st['photos']} photos -> "
+                   f"{c(str(st['circle']), 'bright_green')} circle, {c(str(st['empty']), 'bright_cyan')} empty crops")
                 if st["no_boxes"]:
-                    print(f"  no boxes found in: {', '.join(st['no_boxes'])}")
+                    warn(f"no boxes found in: {', '.join(st['no_boxes'])}")
                 if st["suspicious"]:
-                    print(f"  WARNING every box looks filled (should these be in full/?): {', '.join(st['suspicious'])}")
+                    warn(f"every box looks filled (should these be in full/?): {', '.join(st['suspicious'])}")
         if n_photo_crops == 0:
-            print(f"  no photos found under {photos_dir} (put some in full/ and available/ to use them)")
+            warn(f"no photos found under {photos_dir} (put some in full/ and available/ to use them)")
     else:
-        print("  skipped (--no-photos)")
+        info("skipped (--no-photos)")
 
     # ---------------------------------------------------------------- 2. synthetic data
     stage(2, n_stages, "synthetic training data")
     if not data_path.exists():
-        print(f"  no cached dataset at {data_path.name}; generating {n_cells_if_missing} synthetic cells (one-off, a few minutes)")
+        info(f"no cached dataset at {data_path.name}; generating {n_cells_if_missing} synthetic cells (one-off, a few minutes)")
         X, y, stats = build_synthetic_cells(n_cells_if_missing, seed=seed)
         save_cells(data_path, X, y)
-        print(f"  saved to {data_path}  (detect rate {100 * stats['detect_rate']:.1f}%, circle fraction {stats['circle_frac']:.2f})")
+        ok(f"saved to {data_path}  (detect rate {100 * stats['detect_rate']:.1f}%, circle fraction {stats['circle_frac']:.2f})")
     else:
-        print(f"  using cached {data_path.name}")
+        info(f"using cached {data_path.name}")
     X_np, y_np = load_cells(data_path)
-    print(f"  {len(y_np)} synthetic cells loaded")
+    ok(f"{c(str(len(y_np)), 'bright_green')} synthetic cells loaded")
     Xr, yr = load_real_cells()
     if len(yr):
         # A few hundred real crops would vanish next to 20k synthetic ones, so repeat
         # them until they make up about `real_share` of the training data.
         repeat = max(1, int(round(real_share * len(y_np) / ((1 - real_share) * len(yr)))))
-        print(f"  {len(yr)} real crops repeated x{repeat} so they are ~{100 * real_share:.0f}% of the data")
+        ok(f"{c(str(len(yr)), 'bright_green')} real crops repeated x{repeat} so they are ~{100 * real_share:.0f}% of the data")
         X_np = np.concatenate([X_np] + [Xr] * repeat)
         y_np = np.concatenate([y_np] + [yr] * repeat)
 
@@ -123,8 +124,8 @@ def train(
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs))
     n_batches = (len(ytr) + batch_size - 1) // batch_size
-    print(f"  device {dev} | {len(ytr)} train / {len(yval)} validation cells | "
-          f"{epochs} epochs x {n_batches} batches of {batch_size} | {sum(p.numel() for p in model.parameters())} parameters")
+    info(f"device {dev} | {len(ytr)} train / {len(yval)} validation cells | "
+         f"{epochs} epochs x {n_batches} batches of {batch_size} | {sum(p.numel() for p in model.parameters())} parameters")
 
     best_acc, best_state, best_epoch = 0.0, None, 0
     t0 = time.time()
@@ -153,14 +154,20 @@ def train(
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         elapsed = time.time() - t0
         eta = elapsed / epoch * (epochs - epoch)
+        acc_txt = f"{100 * acc:6.2f}%"
+        acc_col = "bright_green" if acc >= 0.99 else ("bright_yellow" if acc >= 0.95 else "red")
+        plain = (f"  epoch {epoch:2d}/{epochs}  loss {total_loss / len(ytr):.4f}  val acc {acc_txt}"
+                 f"{'  *best*' if improved else ''}  [{fmt_secs(elapsed)} elapsed, ~{fmt_secs(eta)} left]")
         bar.close(
-            f"  epoch {epoch:2d}/{epochs}  loss {total_loss / len(ytr):.4f}  "
-            f"val acc {100 * acc:6.2f}%{'  *best*' if improved else ''}  "
-            f"[{fmt_secs(elapsed)} elapsed, ~{fmt_secs(eta)} left]"
+            f"  {c(f'epoch {epoch:2d}/{epochs}', 'bold')}  loss {total_loss / len(ytr):.4f}  "
+            f"val acc {c(acc_txt, 'bold', acc_col)}{c('  *best*', 'bright_green') if improved else ''}  "
+            f"{c(f'[{fmt_secs(elapsed)} elapsed, ~{fmt_secs(eta)} left]', 'dim')}",
+            plain_len=len(plain),
         )
 
     model.load_state_dict(best_state)
     save_model(model.cpu(), out_path)
-    print(f"\nDone in {fmt_secs(time.time() - t_start)}. Best validation accuracy {100 * best_acc:.2f}% "
-          f"(epoch {best_epoch}) saved to {out_path}")
+    print("\n" + c(f"Done in {fmt_secs(time.time() - t_start)}.", "bold", "bright_green")
+          + f" Best validation accuracy {c(f'{100 * best_acc:.2f}%', 'bold', 'bright_green')} "
+          f"(epoch {best_epoch}) saved to {c(str(out_path), 'bright_cyan')}")
     return {"val_acc": best_acc, "n_train": len(ytr), "n_val": len(yval), "device": str(dev)}

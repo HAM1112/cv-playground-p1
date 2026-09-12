@@ -53,9 +53,14 @@ def build_synthetic_cells(
         if bar is not None:
             bar.update(total, extra=f"boards {n_boards}, detected {100.0 * n_detected / n_boards:.0f}%")
     if bar is not None:
+        from .progress import TICK, c
+
+        plain = (f"  {TICK} rendered {n_boards} boards, {n_detected} detected "
+                 f"({100.0 * n_detected / n_boards:.1f}%), {total} cells in {time.time() - t0:.0f}s")
         bar.close(
-            f"  rendered {n_boards} boards, {n_detected} detected "
-            f"({100.0 * n_detected / n_boards:.1f}%), {total} cells in {time.time() - t0:.0f}s"
+            f"  {c(TICK, 'bright_green')} rendered {n_boards} boards, {n_detected} detected "
+            f"({100.0 * n_detected / n_boards:.1f}%), {c(str(total), 'bright_green')} cells in {time.time() - t0:.0f}s",
+            plain_len=len(plain),
         )
     X = np.concatenate(crops, axis=0)
     y = np.concatenate(labels, axis=0)
