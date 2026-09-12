@@ -115,6 +115,22 @@ The trained model `models/cellnet.pt` is in the repository, so nothing needs tra
 Pi. If you retrain on your laptop later, commit and pull the new file, or copy it over with
 `scp`.
 
+### 4.1 Switch the Raspberry Pi features on (feature flag)
+
+All Pi/LED code is behind the `raspberry_connected` feature flag, which is **off** in the
+repository so that nothing ever touches GPIO on a laptop. On the Pi, turn it on by editing
+`gridcheck.toml` in the project folder:
+
+```toml
+[features]
+raspberry_connected = true
+```
+
+or, for a single run, with an environment variable: `GRIDCHECK_RASPBERRY_CONNECTED=1 uv run gridcheck led-test`.
+
+With the flag off, `gridcheck led-test` refuses to run, `cam --leds on` refuses to start, and
+`cam` (default `--leds auto`) prints a yellow note and runs without LEDs.
+
 ---
 
 ## 5. Test the LEDs (no camera needed)
@@ -183,7 +199,8 @@ journalctl -u gridcheck -f          # watch the log
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `LEDs disabled: ... pin factory ... not a Raspberry Pi, or python3-lgpio missing` | gpiozero found no GPIO driver | `sudo apt install python3-lgpio`; make sure the venv was created with `--system-site-packages` |
+| `Raspberry Pi features are off (raspberry_connected = false)` | the feature flag is still off | set `raspberry_connected = true` in `gridcheck.toml` (section 4.1) |
+| `LEDs disabled: no GPIO pin driver found: not a Raspberry Pi, or python3-lgpio is missing` | gpiozero found no GPIO driver | `sudo apt install python3-lgpio`; make sure the venv was created with `--system-site-packages` |
 | `PermissionError` / `Permission denied: /dev/gpiochip*` | your user is not in the `gpio` group | `sudo usermod -aG gpio $USER`, log out and back in |
 | `RuntimeError: LEDs requested but unavailable` with `--leds on` | as above | fix the driver, or drop `--leds on` |
 | Works on Pi 4, nothing lights on Pi 5 | old `RPi.GPIO` driver on Pi 5 | this project uses gpiozero + lgpio, which is Pi 5 safe; install `python3-lgpio` |

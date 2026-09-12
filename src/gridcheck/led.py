@@ -94,8 +94,21 @@ def make_leds(
     mode "on"   -> StatusLeds; raises RuntimeError with a clear message if impossible.
     mode "auto" -> StatusLeds if gpiozero and a GPIO pin factory are available, otherwise
                    NullLeds after calling warn(reason).
+
+    Everything hardware-related sits behind the `raspberry_connected` feature flag
+    (gridcheck.toml). With the flag off, "auto" yields NullLeds without touching GPIO and
+    "on" raises, whatever the machine.
     """
     if mode == "off":
+        return NullLeds(available_pin, full_pin)
+    from .config import feature, how_to_enable
+
+    if not feature("raspberry_connected"):
+        msg = f"Raspberry Pi features are off (raspberry_connected = false); {how_to_enable('raspberry_connected')}"
+        if mode == "on":
+            raise RuntimeError(msg)
+        if warn:
+            warn(msg)
         return NullLeds(available_pin, full_pin)
     try:
         import gpiozero  # noqa: F401

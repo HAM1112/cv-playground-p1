@@ -33,7 +33,10 @@ uv run gridcheck led-test               # lights each LED in turn to check the w
 uv run gridcheck cam --no-window        # LEDs follow the status; both off on exit
 ```
 
-On a laptop without GPIO the LEDs are simply disabled (a yellow note says so).
+All Pi/LED code is behind a **feature flag** that is off by default. On the Pi, set
+`raspberry_connected = true` under `[features]` in `gridcheck.toml` (or run with
+`GRIDCHECK_RASPBERRY_CONNECTED=1`). With the flag off, `led-test` and `cam --leds on` refuse to
+run and `cam` simply runs without LEDs, so a laptop never touches GPIO.
 Full wiring diagram, pin map, autostart and troubleshooting: [RASPBERRY_PI.md](RASPBERRY_PI.md).
 
 ## How the system works
@@ -140,6 +143,8 @@ src/gridcheck/
   harvest.py   crops from your photos
   reset.py     fresh-project cleanup
   led.py       Raspberry Pi status LEDs (version 2)
+  config.py    feature flags (reads gridcheck.toml)
   progress.py  coloured logs and progress bars
+gridcheck.toml settings / feature flags (raspberry_connected)
 tests/         pytest tests and the two reference sketches
 ```

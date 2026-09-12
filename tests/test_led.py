@@ -10,12 +10,39 @@ from gridcheck.led import AVAILABLE_PIN, FULL_PIN, NullLeds, StatusLeds, make_le
 
 
 @pytest.fixture
-def mock_pins():
+def mock_pins(monkeypatch):
+    monkeypatch.setenv("GRIDCHECK_RASPBERRY_CONNECTED", "1")   # feature flag on for these tests
     factory = MockFactory()
     Device.pin_factory = factory
     yield factory
     factory.reset()
     Device.pin_factory = None
+
+
+def test_feature_flag_off_blocks_all_hardware(monkeypatch):
+    monkeypatch.setenv("GRIDCHECK_RASPBERRY_CONNECTED", "0")
+    Device.pin_factory = MockFactory()          # hardware would be available ...
+    try:
+        warnings = []
+        leds = make_leds("auto", warn=warnings.append)
+        assert isinstance(leds, NullLeds) and not leds.enabled   # ... but the flag wins
+        assert warnings and "raspberry_connected" in warnings[0]
+        with pytest.raises(RuntimeError, match="raspberry_connected"):
+            make_leds("on")
+        assert isinstance(make_leds("off"), NullLeds)
+    finally:
+        Device.pin_factory = None
+
+
+def test_feature_flag_reads_env_and_file(monkeypatch, tmp_path):
+    from gridcheck import config
+
+    monkeypatch.delenv("GRIDCHECK_RASPBERRY_CONNECTED", raising=False)
+    assert config.feature("raspberry_connected") is False          # repo default: off
+    monkeypatch.setenv("GRIDCHECK_RASPBERRY_CONNECTED", "true")
+    assert config.feature("raspberry_connected") is True
+    with pytest.raises(KeyError):
+        config.feature("no_such_flag")
 
 
 def _levels(factory):
@@ -61,6 +88,8 @@ def test_make_leds_modes(mock_pins):
 
 def test_make_leds_falls_back_without_hardware(monkeypatch):
     import gridcheck.led as led_mod
+
+    monkeypatch.setenv("GRIDCHECK_RASPBERRY_CONNECTED", "1")   # flag on: reach the hardware path
 
     class Boom(StatusLeds):
         def __init__(self, *a, **k):

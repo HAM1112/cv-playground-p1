@@ -464,6 +464,12 @@ moment it prints), and `close` when it exits. `gridcheck led-test` lights each L
 verify the wiring without a camera. On any machine, `GPIOZERO_PIN_FACTORY=mock` simulates the
 header. Wiring, pin map, Pi setup and troubleshooting: **[RASPBERRY_PI.md](RASPBERRY_PI.md)**.
 
+**Feature flag.** All of this is gated by `raspberry_connected` in `gridcheck.toml`
+(`src/gridcheck/config.py` reads it; the environment variable `GRIDCHECK_RASPBERRY_CONNECTED`
+overrides the file). It is `false` in the repository. While it is off, `make_leds` never
+imports gpiozero or touches GPIO: `auto` returns `NullLeds` with a yellow note, `on` raises,
+so `led-test` and `cam --leds on` refuse to run. Turn it on only on the Pi.
+
 ### 9.9 `cli.py` and `reset.py`
 
 `cli.py` is the only file that talks to the user: it defines the sub-commands, parses options

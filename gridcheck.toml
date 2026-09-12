@@ -1,0 +1,8 @@
+# gridcheck settings. Feature flags switch whole parts of the program on or off.
+
+[features]
+# Raspberry Pi hardware (status LEDs on GPIO 17 / 18, `gridcheck led-test`, `cam --leds`).
+# Leave false on a laptop. Set to true only on a Raspberry Pi with the LEDs wired up
+# (see RASPBERRY_PI.md). Can be overridden per run with the environment variable
+# GRIDCHECK_RASPBERRY_CONNECTED=1 (or 0).
+raspberry_connected = false
