@@ -156,7 +156,21 @@ def cmd_harvest(args: argparse.Namespace) -> int:
 def cmd_reset(args: argparse.Namespace) -> int:
     from .reset import plan_reset, run_reset
 
-    plan = plan_reset(include_photos=args.photos)
+    def ask(question: str) -> bool:
+        return input(question).strip().lower() in {"y", "yes"}
+
+    # Decide about the photos first: flags win, otherwise ask.
+    n_photos = len(plan_reset(include_photos=True).get("your training photos", []))
+    if args.photos:
+        include_photos = True
+    elif args.keep_photos or args.dry_run or args.yes or n_photos == 0:
+        include_photos = False
+    else:
+        include_photos = ask(
+            f"you have {n_photos} training photo(s) in data/photos. Remove them as well? [y/N] "
+        )
+
+    plan = plan_reset(include_photos=include_photos)
     total = sum(len(v) for v in plan.values())
     if total == 0:
         print("nothing to remove: the project is already fresh")
@@ -166,8 +180,8 @@ def cmd_reset(args: argparse.Namespace) -> int:
         if paths:
             shown = ", ".join(p.name for p in paths[:3]) + (", ..." if len(paths) > 3 else "")
             print(f"  {kind}: {len(paths)} file(s)  ({shown})")
-    if not args.photos:
-        print("  (your photos in data/photos are kept; add --photos to delete them too)")
+    if not include_photos and n_photos:
+        print(f"  (your {n_photos} photo(s) in data/photos are kept)")
     if args.dry_run:
         print("dry run, nothing deleted")
         return 0
@@ -220,8 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
     ph.set_defaults(func=cmd_harvest)
 
     pr = sub.add_parser("reset", help="delete the trained model and all generated data (fresh project)")
-    pr.add_argument("--photos", action="store_true", help="also delete your photos in data/photos")
-    pr.add_argument("--yes", "-y", action="store_true", help="do not ask for confirmation")
+    pr.add_argument("--photos", action="store_true", help="also delete your photos in data/photos (no question asked)")
+    pr.add_argument("--keep-photos", action="store_true", help="keep your photos (no question asked)")
+    pr.add_argument("--yes", "-y", action="store_true", help="do not ask for confirmation (photos are kept)")
     pr.add_argument("--dry-run", action="store_true", help="only show what would be deleted")
     pr.set_defaults(func=cmd_reset)
 

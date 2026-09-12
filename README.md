@@ -46,7 +46,7 @@ touching the edge of the frame is reported as `invalid field view`, and `--debug
 | `uv run gridcheck train [--epochs 10]` | harvest your photos, build synthetic data if missing, train, save the model |
 | `uv run gridcheck synth [--n 20000] [--samples DIR]` | (re)generate the synthetic dataset; optionally save example frames |
 | `uv run gridcheck harvest <folder> [--sheets DIR]` | cut and auto-label box crops from unsorted photos, with review sheets |
-| `uv run gridcheck reset [--dry-run] [--photos]` | delete the trained model and generated data; photos kept unless `--photos` |
+| `uv run gridcheck reset [--dry-run]` | fresh project: asks whether to remove your photos too, then deletes the model and all generated data (`--photos` / `--keep-photos` skip the question) |
 | `uv run pytest` | run the tests |
 
 Add `--help` to any command for all options.

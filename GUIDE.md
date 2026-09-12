@@ -243,14 +243,18 @@ people never need this command.)
 ### `gridcheck reset` — start over
 
 ```
-uv run gridcheck reset            # lists what will be deleted, asks y/N
-uv run gridcheck reset --dry-run  # list only
-uv run gridcheck reset --photos   # also delete your photos
-uv run gridcheck reset --yes      # no question asked
+uv run gridcheck reset                # interactive, see below
+uv run gridcheck reset --dry-run      # list only, delete nothing
+uv run gridcheck reset --photos       # delete photos too, without asking
+uv run gridcheck reset --keep-photos  # keep photos, without asking
+uv run gridcheck reset --yes          # no questions at all (photos are kept)
 ```
 
-Deletes the trained model, the synthetic dataset, the harvested crops and camera snapshots.
-Your photos are kept unless `--photos` is given. Folders stay, so `train` can rebuild at once.
+Interactive flow: it first asks *"you have N training photo(s) in data/photos. Remove them as
+well? [y/N]"*. Answer `y` and the photos go too; answer `n` (or just press Enter) and they are
+kept. Then it lists everything that will be deleted (trained model, synthetic dataset,
+harvested crops, camera snapshots, and the photos if you said yes) and asks *"proceed? [y/N]"*.
+Folders stay in place, so `train` can rebuild at once.
 
 ### Tests
 
