@@ -57,19 +57,32 @@ uv run pytest                               # detection + end-to-end tests
 
 `gridcheck synth --samples some/dir --n 0` writes a few full synthetic frames for inspection.
 
-## Adding real photos
+## Training on your own photos
 
-Put webcam photos of the sheet in a folder (e.g. `local_test/`, git-ignored) and run:
+Drop photos of the sheet into these two folders (git-ignored), sorted by what the answer
+should be:
 
 ```
-uv run gridcheck harvest local_test --sheets review/   # cut + auto-label cell crops
-uv run gridcheck train --epochs 10                      # retrain with real crops mixed in
+data/photos/full/         every box has a circle
+data/photos/available/    at least one box is empty
 ```
 
-`harvest` finds every clean box in each photo, even when the board's border runs off the frame,
-saves one 64×64 crop per box under `data/real/{circle,empty}/`, and writes a contact sheet per
-label to the `--sheets` folder. Glance at the sheets and delete any crop that is mislabelled
-before training. Real crops are repeated during training until they make up ~15% of the data.
+Then run one command:
+
+```
+uv run gridcheck train
+```
+
+It cuts one crop per box out of every photo (`full/` crops are all labelled circle; in
+`available/` each box is labelled by the ink in its centre), mixes them with the synthetic data
+at ~15% weight, trains for 10 epochs and writes `models/cellnet.pt`. Re-running is safe: crops
+are regenerated with fixed names. Options: `--epochs N`, `--photos DIR`, `--no-photos`.
+
+Photos whose border runs off the frame still contribute: every clean box in them is used.
+The command warns about `available/` photos in which every box looks filled.
+
+Unsorted photos can be cut into crops for manual sorting with
+`uv run gridcheck harvest some/folder --sheets review/`, which also writes contact sheets.
 
 Framing tips for the camera: keep the whole border inside the view with some paper visible
 around it. A border that touches the edge of the frame is reported as `invalid field view`.

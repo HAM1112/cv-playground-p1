@@ -7,3 +7,5 @@ data/real/*/*
 !data/real/*/.gitkeep
 local_test/
 captures/
+data/photos/*/*
+!data/photos/*/.gitkeep

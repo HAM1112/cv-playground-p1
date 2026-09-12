@@ -128,6 +128,8 @@ def cmd_train(args: argparse.Namespace) -> int:
     from .model import DEFAULT_MODEL_PATH
     from .train import train
 
+    from .harvest import DEFAULT_PHOTOS_DIR
+
     train(
         data_path=args.data or DEFAULT_CACHE,
         out_path=args.out or DEFAULT_MODEL_PATH,
@@ -136,6 +138,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         lr=args.lr,
         seed=args.seed,
         device=args.device,
+        photos_dir=None if args.no_photos else (args.photos or DEFAULT_PHOTOS_DIR),
     )
     return 0
 
@@ -196,6 +199,8 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--data", help="input .npz (default data/synth_cells.npz)")
     pt.add_argument("--out", help="output weights (default models/cellnet.pt)")
     pt.add_argument("--device", help="torch device (cpu / cuda)")
+    pt.add_argument("--photos", help="folder with full/ and available/ photo subfolders (default data/photos)")
+    pt.add_argument("--no-photos", action="store_true", help="train on synthetic data only")
     pt.set_defaults(func=cmd_train)
     return p
 

@@ -21,7 +21,9 @@ MIN_CELL_AREA_FRAC = 0.01
 MAX_CELL_AREA_FRAC = 0.20
 INNER_SHRINK = 0.08          # pull the quad toward its centre to drop the stroke edges
 INK_DARK_RATIO = 0.55        # pixel darker than this * paper level counts as ink
-CIRCLE_MIN_INK = 0.02        # fraction of the central region that must be ink
+CIRCLE_MIN_INK = 0.04        # fraction of the central region that must be ink (a real
+                             # circle is 0.15+; faint erased marks stay below this)
+MIN_PAPER_LEVEL = 90         # a crop whose bright level is below this is not a paper cell
 
 
 def _cell_quads(binary: np.ndarray) -> list[np.ndarray]:
@@ -72,6 +74,76 @@ def auto_label(crop: np.ndarray) -> tuple[int, float]:
     return (1 if ink >= CIRCLE_MIN_INK else 0), ink
 
 
+def looks_like_paper(crop: np.ndarray) -> bool:
+    """False for crops of hand, desk or background that happen to be quad-shaped."""
+    return float(np.percentile(crop, 80)) >= MIN_PAPER_LEVEL
+
+
+DEFAULT_PHOTOS_DIR = DEFAULT_REAL_DIR.parent / "photos"
+PHOTO_LABELS = ("full", "available")
+
+
+def _photo_cells(gray: np.ndarray) -> list[np.ndarray]:
+    """Cell crops from a photo: the full detector if it succeeds, else every clean box."""
+    from .board import find_board
+
+    res = find_board(gray)
+    if res is not None:
+        return list(res.crops)
+    return [crop_quad(gray, q) for q in _cell_quads(_binarize(gray))]
+
+
+def harvest_labeled(photos_dir: Path | str = DEFAULT_PHOTOS_DIR, out_dir: Path | str = DEFAULT_REAL_DIR) -> dict:
+    """Turn photos sorted into <photos_dir>/full and <photos_dir>/available into cell crops.
+
+    full/      -> every box holds a circle, so every crop is labelled `circle`.
+    available/ -> boxes are labelled individually by the ink in their centre.
+    Crops are written to <out_dir>/{circle,empty}/ with deterministic names, so
+    re-running overwrites instead of duplicating. Returns per-folder statistics.
+    """
+    photos_dir, out_dir = Path(photos_dir), Path(out_dir)
+    for name in LABELS:
+        (out_dir / name).mkdir(parents=True, exist_ok=True)
+    # Regenerate from scratch so crops of deleted or relabelled photos do not linger.
+    for name in LABELS:
+        for old in (out_dir / name).glob("full_*.png"):
+            old.unlink()
+        for old in (out_dir / name).glob("available_*.png"):
+            old.unlink()
+    stats: dict[str, dict] = {}
+    for folder in PHOTO_LABELS:
+        d = photos_dir / folder
+        st = {"photos": 0, "circle": 0, "empty": 0, "no_boxes": [], "suspicious": []}
+        stats[folder] = st
+        if not d.is_dir():
+            continue
+        for p in sorted(d.iterdir()):
+            if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
+                continue
+            img = cv2.imread(str(p))
+            if img is None:
+                continue
+            st["photos"] += 1
+            crops = [c for c in _photo_cells(to_gray(img)) if looks_like_paper(c)]
+            if not crops:
+                st["no_boxes"].append(p.name)
+                continue
+            labels = []
+            for k, crop in enumerate(crops):
+                if folder == "full":
+                    label = 1
+                else:
+                    label, _ink = auto_label(crop)
+                labels.append(label)
+                name = LABELS[label]
+                fname = f"{folder}_{p.stem.replace(' ', '_')}_{k:02d}.png"
+                cv2.imwrite(str(out_dir / name / fname), crop)
+                st[name] += 1
+            if folder == "available" and all(labels):
+                st["suspicious"].append(p.name)   # labelled available but every box looks filled
+    return stats
+
+
 def harvest(image_dir: Path | str, out_dir: Path | str = DEFAULT_REAL_DIR, sheet_dir: Path | str | None = None) -> dict:
     image_dir, out_dir = Path(image_dir), Path(out_dir)
     for name in LABELS:
@@ -90,6 +162,8 @@ def harvest(image_dir: Path | str, out_dir: Path | str = DEFAULT_REAL_DIR, sheet
         quads = _cell_quads(_binarize(gray))
         for k, q in enumerate(quads):
             crop = crop_quad(gray, q)
+            if not looks_like_paper(crop):
+                continue
             label, ink = auto_label(crop)
             name = LABELS[label]
             fname = f"{p.stem.replace(' ', '_')}_{k:02d}.png"

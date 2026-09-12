@@ -58,8 +58,20 @@ def train(
     device: str | None = None,
     n_cells_if_missing: int = 20000,
     real_share: float = 0.15,
+    photos_dir: Path | str | None = None,
 ) -> dict:
     data_path = Path(data_path)
+    if photos_dir is not None:
+        from .harvest import harvest_labeled
+
+        stats = harvest_labeled(photos_dir)
+        for folder, st in stats.items():
+            if st["photos"]:
+                print(f"photos/{folder}: {st['photos']} photos -> {st['circle']} circle, {st['empty']} empty crops")
+                if st["no_boxes"]:
+                    print(f"  no boxes found in: {', '.join(st['no_boxes'])}")
+                if st["suspicious"]:
+                    print(f"  WARNING every box looks filled (should these be in full/?): {', '.join(st['suspicious'])}")
     if not data_path.exists():
         print(f"No dataset at {data_path}; generating {n_cells_if_missing} synthetic cells ...")
         X, y, stats = build_synthetic_cells(n_cells_if_missing, seed=seed)
