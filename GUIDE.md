@@ -450,7 +450,21 @@ folder. Both try `find_board` first and fall back to "every clean quadrilateral 
 when the whole board can't be found. `auto_label` measures dark ink in the crop's centre;
 `looks_like_paper` rejects crops of hands or desk.
 
-### 9.8 `cli.py` and `reset.py`
+### 9.8 `led.py` — Raspberry Pi status LEDs (version 2)
+
+`StatusLeds` wraps two `gpiozero.LED` objects (BCM GPIO 17 = Available, GPIO 18 = Full).
+`set_status(status)` maps the three verdict strings to the LEDs: Available → 17 on, Full → 18
+on, anything else → both off. `close()` switches both off and releases the pins.
+`NullLeds` has the same interface and does nothing, and `make_leds(mode, …)` picks between
+them: `auto` (default) uses real LEDs when gpiozero and a GPIO driver are present, otherwise
+prints a yellow note and continues without; `on` insists; `off` never touches GPIO.
+
+`gridcheck cam` calls `set_status` at the exact moment the debounced status changes (the same
+moment it prints), and `close` when it exits. `gridcheck led-test` lights each LED in turn to
+verify the wiring without a camera. On any machine, `GPIOZERO_PIN_FACTORY=mock` simulates the
+header. Wiring, pin map, Pi setup and troubleshooting: **[RASPBERRY_PI.md](RASPBERRY_PI.md)**.
+
+### 9.9 `cli.py` and `reset.py`
 
 `cli.py` is the only file that talks to the user: it defines the sub-commands, parses options
 and calls the modules above. `reset.py` lists and deletes generated files.

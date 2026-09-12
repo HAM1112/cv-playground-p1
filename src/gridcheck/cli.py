@@ -1,9 +1,12 @@
 """Command line interface.
 
     gridcheck image <path> [--debug] [--no-pad]
-    gridcheck cam [--device 0] [--debug] [--no-window]
+    gridcheck cam [--device 0] [--debug] [--no-window] [--leds auto|on|off]
+    gridcheck led-test [--seconds 1.5]                      (Raspberry Pi, see RASPBERRY_PI.md)
     gridcheck synth [--n 20000] [--seed 0] [--out data/synth_cells.npz] [--samples DIR]
+    gridcheck harvest <folder> [--sheets DIR]
     gridcheck train [--epochs 10] [--batch-size 128] [--lr 1e-3] [--device cpu|cuda]
+    gridcheck reset [--dry-run] [--photos]
 """
 
 from __future__ import annotations
@@ -17,7 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .infer import INVALID, Classifier, draw_debug
+from .infer import AVAILABLE, FULL, INVALID, Classifier, draw_debug
+from .led import AVAILABLE_PIN, FULL_PIN, make_leds
 from .progress import banner, c, fail, info, num, ok, path_text, prompt, status_text, warn
 
 VOTE_WINDOW = 5
@@ -123,6 +127,10 @@ def cmd_cam(args: argparse.Namespace) -> int:
     last_reason: str | None = None
     snap_dir = Path(args.snapshots)
     ok(f"camera {num(device)} open; model loaded on {clf.device}")
+    leds = make_leds(args.leds, args.led_available, args.led_full, warn=warn)
+    if leds.enabled:
+        ok(f"LEDs: GPIO{num(leds.available_pin)} = {status_text(AVAILABLE)}, "
+           f"GPIO{num(leds.full_pin)} = {status_text(FULL)}, both off when invalid")
     info(f"keys: {c('q', 'bold')} = quit, {c('s', 'bold')} = save a snapshot of the current frame")
     info("status is printed whenever it changes:")
     try:
@@ -138,6 +146,7 @@ def cmd_cam(args: argparse.Namespace) -> int:
                 if stable != last_printed:
                     stamp = c(time.strftime("%H:%M:%S"), "dim")
                     print(f"{stamp}  {status_text(stable)}", flush=True)
+                    leds.set_status(stable)
                     last_printed = stable
             if args.debug and verdict.reason and verdict.reason != last_reason:
                 warn(f"why invalid: {verdict.reason}")
@@ -154,6 +163,7 @@ def cmd_cam(args: argparse.Namespace) -> int:
                     cv2.imwrite(str(path), frame)
                     ok(f"saved {path_text(path)}")
     finally:
+        leds.close()          # both LEDs off on q, Ctrl-C or error
         cap.release()
         cv2.destroyAllWindows()
     return 0
@@ -216,6 +226,27 @@ def cmd_harvest(args: argparse.Namespace) -> int:
        f"empty crops: {c(str(stats['empty']), 'bright_green')}")
     ok(f"saved under {path_text(args.out or DEFAULT_REAL_DIR)}"
        + (f", contact sheets in {path_text(args.sheets)}" if args.sheets else ""))
+    return 0
+
+
+def cmd_led_test(args: argparse.Namespace) -> int:
+    """Light each LED in turn so the wiring can be checked without camera or model."""
+    banner("led-test", f"GPIO{args.led_available} = Available, GPIO{args.led_full} = Full")
+    leds = make_leds("on", args.led_available, args.led_full)
+    steps = [
+        (AVAILABLE, f"GPIO{args.led_available} on  (the {status_text(AVAILABLE)} LED)"),
+        (FULL, f"GPIO{args.led_full} on  (the {status_text(FULL)} LED)"),
+        (INVALID, "both off  (what an invalid view looks like)"),
+    ]
+    try:
+        for _round in range(args.rounds):
+            for status, text in steps:
+                leds.set_status(status)
+                ok(text)
+                time.sleep(args.seconds)
+        ok("LED test finished; both LEDs are off")
+    finally:
+        leds.close()
     return 0
 
 
@@ -284,6 +315,10 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--debug", action="store_true", help="draw the detection overlay")
     pc.add_argument("--no-window", action="store_true", help="headless: print status only")
     pc.add_argument("--snapshots", default="captures", help="folder for frames saved with the s key")
+    pc.add_argument("--leds", choices=["auto", "on", "off"], default="auto",
+                    help="drive the Raspberry Pi status LEDs: auto = if GPIO is available (default)")
+    pc.add_argument("--led-available", type=int, default=AVAILABLE_PIN, help="BCM GPIO of the Available LED (default 17)")
+    pc.add_argument("--led-full", type=int, default=FULL_PIN, help="BCM GPIO of the Full LED (default 18)")
     pc.add_argument("--model", help="path to cellnet.pt")
     pc.add_argument("--device-torch", dest="device_torch", help="torch device (cpu / cuda)")
     pc.set_defaults(func=cmd_cam)
@@ -301,6 +336,13 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("--out", help="output root (default data/real)")
     ph.add_argument("--sheets", help="write contact sheets for review to this directory")
     ph.set_defaults(func=cmd_harvest)
+
+    pl = sub.add_parser("led-test", help="Raspberry Pi: light each status LED in turn to check the wiring")
+    pl.add_argument("--seconds", type=float, default=1.5, help="how long each step stays lit (default 1.5)")
+    pl.add_argument("--rounds", type=int, default=1, help="repeat the sequence this many times")
+    pl.add_argument("--led-available", type=int, default=AVAILABLE_PIN, help="BCM GPIO of the Available LED (default 17)")
+    pl.add_argument("--led-full", type=int, default=FULL_PIN, help="BCM GPIO of the Full LED (default 18)")
+    pl.set_defaults(func=cmd_led_test)
 
     pr = sub.add_parser("reset", help="delete the trained model and all generated data (fresh project)")
     pr.add_argument("--photos", action="store_true", help="also delete your photos in data/photos (no question asked)")
@@ -327,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, RuntimeError) as e:
         fail(str(e))
         return 2
     except KeyboardInterrupt:

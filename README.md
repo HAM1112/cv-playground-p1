@@ -11,6 +11,30 @@ Point a camera at a white sheet with a bordered grid of boxes. The program print
 The number of boxes (rows × columns) is not fixed; it is read from the image.
 
 > Want the long version? **[GUIDE.md](GUIDE.md)** explains everything in depth for beginners.
+> Running it on a Raspberry Pi with LEDs? See **[RASPBERRY_PI.md](RASPBERRY_PI.md)**.
+
+## Version 2: Raspberry Pi + status LEDs
+
+The same program runs on a Raspberry Pi 4/5 and mirrors the status on two LEDs:
+
+| Status               | LED on GPIO 17 (Available) | LED on GPIO 18 (Full) |
+|----------------------|:--:|:--:|
+| `Available`          | on | off |
+| `Full`               | off | on |
+| `invalid field view` | off | off |
+
+Wire each LED through a 330 Ω resistor: GPIO 17 (physical pin 11) → resistor → LED → GND
+(pin 9), and GPIO 18 (physical pin 12) → resistor → LED → GND. Then on the Pi:
+
+```
+sudo apt install -y python3-lgpio python3-gpiozero libgl1
+uv venv --system-site-packages --python /usr/bin/python3 && uv sync --extra pi
+uv run gridcheck led-test               # lights each LED in turn to check the wiring
+uv run gridcheck cam --no-window        # LEDs follow the status; both off on exit
+```
+
+On a laptop without GPIO the LEDs are simply disabled (a yellow note says so).
+Full wiring diagram, pin map, autostart and troubleshooting: [RASPBERRY_PI.md](RASPBERRY_PI.md).
 
 ## How the system works
 
@@ -42,7 +66,8 @@ touching the edge of the frame is reported as `invalid field view`, and `--debug
 | Command | Purpose |
 |---|---|
 | `uv run gridcheck image <file> [--debug] [--save out.png]` | classify one picture; `--debug` shows the overlay and per-box probabilities |
-| `uv run gridcheck cam [--debug]` | live camera; lists connected cameras and asks whether you use an external webcam (`--device N` skips the question); prints the status when it changes |
+| `uv run gridcheck cam [--debug] [--leds auto\|on\|off]` | live camera; lists connected cameras and asks whether you use an external webcam (`--device N` skips the question); prints the status when it changes and drives the Pi LEDs when GPIO is available |
+| `uv run gridcheck led-test [--seconds 1.5]` | Raspberry Pi: lights the Available LED, then the Full LED, then both off, to check the wiring |
 | `uv run gridcheck train [--epochs 10]` | harvest your photos, build synthetic data if missing, train, save the model |
 | `uv run gridcheck synth [--n 20000] [--samples DIR]` | (re)generate the synthetic dataset; optionally save example frames |
 | `uv run gridcheck harvest <folder> [--sheets DIR]` | cut and auto-label box crops from unsorted photos, with review sheets |
@@ -84,6 +109,7 @@ scratch, run `uv run gridcheck reset` first.
 | **torchvision** | PyTorch's image helpers (installed with torch) |
 | **NumPy** | the array type every image and profile is stored in |
 | **pytest** | runs the tests |
+| **gpiozero** (Raspberry Pi only, `--extra pi`) | switches the two status LEDs on the GPIO header; has a mock mode for laptops |
 
 ## Where data is saved
 
@@ -113,5 +139,7 @@ src/gridcheck/
   train.py     training loop
   harvest.py   crops from your photos
   reset.py     fresh-project cleanup
+  led.py       Raspberry Pi status LEDs (version 2)
+  progress.py  coloured logs and progress bars
 tests/         pytest tests and the two reference sketches
 ```
